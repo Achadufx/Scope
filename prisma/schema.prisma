@@ -1,0 +1,179 @@
+// Prisma Schema for SCOPE - The Execution Firewall for Autonomous Agents
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String      @id @default(cuid())
+  email      String      @unique
+  name       String?
+  workspaces Workspace[]
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+}
+
+model Workspace {
+  id          String      @id @default(cuid())
+  name        String      @default("Acme Autonomous Systems")
+  slug        String      @unique @default("acme-autonomous")
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+  agents      Agent[]
+  apiKeys     ApiKey[]
+  contracts   Contract[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model Agent {
+  id             String          @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name           String          @default("Atlas Procurement Agent")
+  description    String          @default("Autonomous procurement and inventory reordering agent for hardware components.")
+  walletAddress  String          // Public address of the agent
+  status         String          @default("ACTIVE") // ACTIVE, PAUSED, REVOKED
+  policies       Policy[]
+  executions     Execution[]
+  simulationRuns SimulationRun[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model Policy {
+  id              String          @id @default(cuid())
+  agentId         String
+  agent           Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  name            String          @default("Procurement V3")
+  owner           String          // Owner wallet address
+  maxPerAction    Float           @default(500.0) // E.g. $500 max per action
+  dailyLimit      Float           @default(2000.0) // E.g. $2,000 daily limit
+  validAfter      DateTime        @default(now())
+  validUntil      DateTime        // Expiry timestamp
+  active          Boolean         @default(true)
+  policyHash      String          @unique
+  chainId         Int             @default(31337)
+  contractAddress String?
+  rules           PolicyRule[]
+  executions      Execution[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model PolicyRule {
+  id          String    @id @default(cuid())
+  policyId    String
+  policy      Policy    @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  type        String    // ALLOWED_ASSET, ALLOWED_TARGET, ALLOWED_RECIPIENT, MAX_AMOUNT, DAILY_LIMIT, TIME_WINDOW, MIN_OUTPUT
+  value       String    // Address, amount, or cron
+  metadata    String?   // JSON string with extra details (e.g. name, symbols)
+  createdAt   DateTime  @default(now())
+}
+
+model Execution {
+  id              String           @id @default(cuid())
+  agentId         String
+  agent           Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  policyId        String?
+  policy          Policy?          @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  target          String           // Target smart contract address
+  asset           String           // Asset address (e.g. USDC)
+  amount          Float            // Numeric amount
+  recipient       String           // Recipient address
+  status          String           // SUCCESS, REVERTED, BLOCKED, PENDING
+  decision        String           // ALLOW, BLOCK, EXPIRED, LIMIT_EXCEEDED, RECIPIENT_NOT_ALLOWED, CONTRACT_NOT_ALLOWED, OUTCOME_VIOLATION
+  txHash          String?
+  blockNumber     Int?
+  gasUsed         Int?
+  capitalMoved    Float            @default(0.0)
+  capitalProtected Float           @default(0.0)
+  checks          ExecutionCheck[]
+  violations      Violation[]
+  createdAt       DateTime         @default(now())
+}
+
+model ExecutionCheck {
+  id          String    @id @default(cuid())
+  executionId String
+  execution   Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  step        String    // SIGNATURE, POLICY_ACTIVE, TIME_WINDOW, TARGET_ALLOWED, ASSET_ALLOWED, RECIPIENT_ALLOWED, AMOUNT_LIMIT, DAILY_LIMIT, POSTCONDITION
+  passed      Boolean
+  details     String?
+  createdAt   DateTime  @default(now())
+}
+
+model Violation {
+  id          String    @id @default(cuid())
+  executionId String
+  execution   Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  type        String    // RECIPIENT_NOT_ALLOWED, ACTION_LIMIT_EXCEEDED, DAILY_LIMIT_EXCEEDED, TARGET_NOT_ALLOWED, ASSET_NOT_ALLOWED, TIME_WINDOW_VIOLATION, OUTCOME_POSTCONDITION_FAILED
+  expected    String
+  actual      String
+  severity    String    @default("HIGH") // CRITICAL, HIGH, MEDIUM
+  createdAt   DateTime  @default(now())
+}
+
+model Transaction {
+  id          String    @id @default(cuid())
+  txHash      String    @unique
+  chainId     Int
+  fromAddress String
+  toAddress   String
+  value       String
+  status      Int       // 1 = success, 0 = reverted
+  revertReason String?
+  blockNumber Int
+  gasUsed     String
+  createdAt   DateTime  @default(now())
+}
+
+model Contract {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  address     String
+  type        String    // POLICY_REGISTRY, EXECUTOR, MOCK_USDC, SAFE_MERCHANT, MALICIOUS_MERCHANT
+  chainId     Int
+  abi         String
+  verified    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+}
+
+model ActivityEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  type        String    // POLICY_CREATED, EXECUTION_APPROVED, EXECUTION_BLOCKED, ATTACK_REPELLED, AGENT_REGISTERED
+  title       String
+  description String
+  metadata    String?   // JSON
+  createdAt   DateTime  @default(now())
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String    @default("Production Agent Key")
+  prefix      String    @default("sk_live_scope_")
+  keyHash     String
+  maskedKey   String    @default("sk_live_scope_••••••••••••9f42")
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model SimulationRun {
+  id          String    @id @default(cuid())
+  agentId     String
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  inputData   String    // JSON
+  result      String    // JSON
+  verdict     String    // ALLOW / BLOCK
+  createdAt   DateTime  @default(now())
+}
