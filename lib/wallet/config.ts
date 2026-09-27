@@ -1,5 +1,5 @@
 import { createConfig, http, cookieStorage, createStorage } from "wagmi";
-import { injected } from "wagmi/connectors";
+import { injected } from "wagmi/connectors/injected";
 import { scopeChain } from "@/lib/blockchain/chain";
 
 /**
