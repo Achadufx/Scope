@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
       case "OFF_HOURS":
         attackName = "Off-Hours Execution Attempt";
-        attackDescription = "Agent attempts execution outside the 08:00 - 18:00 UTC operational window.";
+        attackDescription = "Agent attempts execution at 03:14 UTC outside the 08:00 - 18:00 UTC operational window.";
         recipient = deployments.demoAccounts.supplier;
         target = deployments.contracts.SafeMerchant;
         amount = 350.0;
@@ -68,7 +68,19 @@ export async function POST(req: NextRequest) {
     if (customRecipient) recipient = customRecipient;
     if (customTarget) target = customTarget;
 
-    // Run through SCOPE firewall engine
+    // Scenario clock. The Attack Lab is a scenario player: the legitimate/attack
+    // scenarios run during business hours so SCOPE's operational-hours gateway doesn't
+    // mask the boundary each one is meant to demonstrate (real onchain execution,
+    // recipient allowlist, action limit, postcondition). OFF_HOURS alone runs at 03:14
+    // UTC to exercise the operational-hours rule itself. Both are anchored to *today* so
+    // they always fall inside the policy's date-validity window — a fixed calendar date
+    // would drift out of the window and be misreported as POLICY_EXPIRED. The onchain
+    // execution itself is entirely real; only the scenario's wall-clock is set here.
+    const inHours = new Date();
+    inHours.setUTCHours(14, 0, 0, 0);
+    const offHours = new Date();
+    offHours.setUTCHours(3, 14, 0, 0);
+    const simulatedTime = presetId === "OFF_HOURS" ? offHours.toISOString() : inHours.toISOString();
     const evaluation = await evaluateAndExecute({
       target,
       asset,
@@ -77,6 +89,7 @@ export async function POST(req: NextRequest) {
       postconditionType,
       postconditionToken,
       postconditionValue,
+      simulatedTime,
     });
 
     // Simulated "WITHOUT SCOPE" execution comparison

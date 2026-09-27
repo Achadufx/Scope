@@ -47,10 +47,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Agent not found" }, { status: 404 });
     }
 
-    const calculatedHash =
-      providedHash ||
-      "0x" +
-        Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+    // A policy is only real once the owner has authorized it ONCHAIN (the browser sends
+    // createPolicy to ScopePolicyRegistry via wagmi/EIP-712 and gets the authoritative
+    // bytes32 policyHash back). We persist that real hash — never fabricate one. Requests
+    // without a valid onchain policyHash are rejected so the DB can't drift from the chain.
+    const providedTxHash = body.txHash as string | undefined;
+    if (!providedHash || !/^0x[0-9a-fA-F]{64}$/.test(providedHash)) {
+      return NextResponse.json(
+        {
+          error: "Missing onchain policyHash",
+          message:
+            "Authorize the policy onchain first (owner signs createPolicy via wallet), then submit the resulting bytes32 policyHash. SCOPE does not fabricate policy hashes.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // An agent has exactly one active policy onchain (agentActivePolicy[agent]). Mirror that
+    // in the DB: retire any previously-active policy for this agent before recording the new one.
+    await prisma.policy.updateMany({
+      where: { agentId: agent.id, active: true },
+      data: { active: false },
+    });
 
     const policy = await prisma.policy.create({
       data: {
@@ -62,8 +80,8 @@ export async function POST(req: NextRequest) {
         validAfter: validAfter ? new Date(validAfter) : new Date(),
         validUntil: validUntil ? new Date(validUntil) : new Date(Date.now() + 7 * 86400 * 1000),
         active: true,
-        policyHash: calculatedHash,
-        chainId: deployments.chainId || 31337,
+        policyHash: providedHash,
+        chainId: deployments.chainId || 84532,
         contractAddress: deployments.contracts.ScopePolicyRegistry,
       },
     });

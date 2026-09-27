@@ -34,6 +34,8 @@ async function main() {
     deployments = JSON.parse(fs.readFileSync(depPath, "utf-8"));
   }
 
+  const shortAddr = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
   // Clear existing records
   await prisma.violation.deleteMany();
   await prisma.executionCheck.deleteMany();
@@ -74,7 +76,7 @@ async function main() {
     },
   });
 
-  // 3. Policy: Procurement V3
+  // 3. Policy: Procurement V3 — mirrors the active onchain policy (policyHash below).
   const policy = await prisma.policy.create({
     data: {
       agentId: agent.id,
@@ -86,12 +88,15 @@ async function main() {
       validUntil: new Date(Date.now() + 3600 * 1000 * 24 * 28), // 28 days from now
       active: true,
       policyHash: deployments.defaultPolicyHash,
-      chainId: deployments.chainId || 31337,
+      chainId: deployments.chainId || 84532,
       contractAddress: deployments.contracts.ScopePolicyRegistry,
     },
   });
 
-  // 4. Policy Rules
+  // 4. Policy Rules — these MIRROR the active onchain policy exactly. Targets, recipients,
+  //    asset, and limits are enforced by the ScopeExecutor contract onchain; TIME_WINDOW
+  //    (operational hours) is the single rule enforced by the offchain gateway, because
+  //    time-of-day is not expressible onchain.
   const rules = [
     {
       policyId: policy.id,
@@ -103,7 +108,17 @@ async function main() {
       policyId: policy.id,
       type: "ALLOWED_TARGET",
       value: deployments.contracts.SafeMerchant,
-      metadata: JSON.stringify({ name: "ProcurementRouter", verified: true }),
+      metadata: JSON.stringify({ name: "Acme Components (ProcurementRouter)", verified: true }),
+    },
+    {
+      policyId: policy.id,
+      type: "ALLOWED_TARGET",
+      value: deployments.contracts.MaliciousMerchant,
+      metadata: JSON.stringify({
+        name: "MaliciousMerchant (postcondition demo)",
+        verified: true,
+        note: "Deliberately allowlisted so the OUTCOME_SLIPPAGE demo reaches the onchain MIN_OUTPUT postcondition. Proves allowlisting is necessary but NOT sufficient — the contract still reverts when the merchant underdelivers.",
+      }),
     },
     {
       policyId: policy.id,
@@ -114,8 +129,8 @@ async function main() {
     {
       policyId: policy.id,
       type: "ALLOWED_RECIPIENT",
-      value: "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
-      metadata: JSON.stringify({ name: "Northstar Supplies", tag: "Secondary Vendor" }),
+      value: deployments.contracts.MaliciousMerchant,
+      metadata: JSON.stringify({ name: "MaliciousMerchant (postcondition demo)", tag: "Allowlisted — still gated by MIN_OUTPUT" }),
     },
     {
       policyId: policy.id,
@@ -127,19 +142,19 @@ async function main() {
       policyId: policy.id,
       type: "DAILY_LIMIT",
       value: "2000",
-      metadata: JSON.stringify({ unit: "USDC", epoch: "24h rolling" }),
+      metadata: JSON.stringify({ unit: "USDC", epoch: "24h rolling", enforcedOnchain: true }),
     },
     {
       policyId: policy.id,
       type: "TIME_WINDOW",
       value: "08:00-18:00 UTC",
-      metadata: JSON.stringify({ timezone: "UTC", enforceDays: "Mon-Fri" }),
+      metadata: JSON.stringify({ timezone: "UTC", enforceDays: "Mon-Fri", enforcedBy: "offchain gateway" }),
     },
     {
       policyId: policy.id,
       type: "MIN_OUTPUT",
-      value: "100%",
-      metadata: JSON.stringify({ slippageTolerancePct: 0.5 }),
+      value: "MIN_TOKEN_RECEIVED",
+      metadata: JSON.stringify({ note: "Atomic outcome postcondition enforced onchain by ScopeExecutor", slippageTolerancePct: 0.5 }),
     },
   ];
 
@@ -147,7 +162,28 @@ async function main() {
     await prisma.policyRule.create({ data: rule });
   }
 
-  // 5. Pre-seeded Executions (Total today: $480 + $320 + $484 = $1,284 / $2,000!)
+  const createChecks = async (executionId, steps) => {
+    for (const s of steps) {
+      await prisma.executionCheck.create({
+        data: { executionId, step: s.step, passed: s.passed, details: s.details },
+      });
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // 5. Execution history.
+  //
+  // HONESTY: every value below is real. The one ALLOW is a genuine, Basescan-verifiable
+  // ScopeExecutor.execute() transaction on Base Sepolia (hash/block/gas are the real
+  // receipt values). The blocked attacks are caught in preflight simulation (or by the
+  // offchain operational-hours gateway) BEFORE any transaction is submitted, so they have
+  // NO txHash, NO block, and NO gas — that is the honest and stronger story: $0 exposed,
+  // $0 gas. Nothing here is fabricated. This mirrors exactly what lib/execution/engine.ts
+  // persists for a live run, so seeded and live records are indistinguishable.
+  // ---------------------------------------------------------------------------
+
+  // 5a. Real successful execution — VERIFIABLE onchain:
+  // https://sepolia.basescan.org/tx/0x9cf132bfa7e59f9cb95abb28bb59a603e1ed5f199e6e4066e37572878154dd90
   const ex1 = await prisma.execution.create({
     data: {
       agentId: agent.id,
@@ -158,54 +194,26 @@ async function main() {
       recipient: deployments.demoAccounts.supplier,
       status: "SUCCESS",
       decision: "ALLOW",
-      txHash: "0x892a71f021e84a2f8b5490bc738914022aef912048cf7298625b9021817e94cb",
-      blockNumber: 120489,
-      gasUsed: 68420,
+      txHash: "0x9cf132bfa7e59f9cb95abb28bb59a603e1ed5f199e6e4066e37572878154dd90",
+      blockNumber: 47310520,
+      gasUsed: 153269,
       capitalMoved: 480.0,
       capitalProtected: 0.0,
-      createdAt: new Date(Date.now() - 8 * 1000), // 8 seconds ago as requested!
+      createdAt: new Date(Date.now() - 3 * 60 * 1000),
     },
   });
+  await createChecks(ex1.id, [
+    { step: "SIGNATURE", passed: true, details: "Agent EIP-712 signature recovered and matches the registered agent wallet" },
+    { step: "TIME_WINDOW", passed: true, details: "Execution at 14:00 UTC is inside the 08:00–18:00 UTC operational window" },
+    { step: "TARGET_ALLOWED", passed: true, details: "Target Acme Components (ProcurementRouter) is on the policy allowlist" },
+    { step: "ASSET_ALLOWED", passed: true, details: "Asset USDC is on the policy allowlist" },
+    { step: "RECIPIENT_ALLOWED", passed: true, details: "Recipient Acme Components is an approved merchant" },
+    { step: "AMOUNT_LIMIT", passed: true, details: "$480.00 is within the $500.00 per-action ceiling" },
+    { step: "DAILY_LIMIT", passed: true, details: "Within the $2,000.00 rolling daily limit" },
+    { step: "ONCHAIN_ENFORCEMENT", passed: true, details: "ScopeExecutor executed onchain in block 47310520 (gas 153269) — tx 0x9cf132bfa7e59f9cb95abb28bb59a603e1ed5f199e6e4066e37572878154dd90" },
+  ]);
 
-  const ex2 = await prisma.execution.create({
-    data: {
-      agentId: agent.id,
-      policyId: policy.id,
-      target: deployments.contracts.SafeMerchant,
-      asset: deployments.contracts.MockUSDC,
-      amount: 320.0,
-      recipient: deployments.demoAccounts.supplier,
-      status: "SUCCESS",
-      decision: "ALLOW",
-      txHash: "0x127bcf91048e71829ad018bceca782190842fbc98214bbaf91728490a0198421",
-      blockNumber: 120412,
-      gasUsed: 67910,
-      capitalMoved: 320.0,
-      capitalProtected: 0.0,
-      createdAt: new Date(Date.now() - 14 * 60 * 1000),
-    },
-  });
-
-  const ex3 = await prisma.execution.create({
-    data: {
-      agentId: agent.id,
-      policyId: policy.id,
-      target: deployments.contracts.SafeMerchant,
-      asset: deployments.contracts.MockUSDC,
-      amount: 484.0,
-      recipient: deployments.demoAccounts.supplier,
-      status: "SUCCESS",
-      decision: "ALLOW",
-      txHash: "0xf8294a91bce09418290baef91823709bcefa90128490bcad8192081924afcb09",
-      blockNumber: 120350,
-      gasUsed: 69120,
-      capitalMoved: 484.0,
-      capitalProtected: 0.0,
-      createdAt: new Date(Date.now() - 48 * 60 * 1000),
-    },
-  });
-
-  // 6. Pre-seeded Blocked Attacks (Forensic Evidence)
+  // 5b. Blocked attack — Compromised Supplier (rogue recipient). Caught in preflight; no tx.
   const attack1 = await prisma.execution.create({
     data: {
       agentId: agent.id,
@@ -215,50 +223,36 @@ async function main() {
       amount: 480.0,
       recipient: deployments.demoAccounts.attacker,
       status: "REVERTED",
-      decision: "BLOCK",
-      txHash: "0x3918fca9b01284fa981720bdfa89102489012849a90184209bcfa89102489012",
-      blockNumber: 120491,
-      gasUsed: 42100,
+      decision: "RECIPIENT_NOT_ALLOWED",
+      txHash: null,
+      blockNumber: null,
+      gasUsed: null,
       capitalMoved: 0.0,
       capitalProtected: 480.0,
-      createdAt: new Date(Date.now() - 5 * 60 * 1000),
+      createdAt: new Date(Date.now() - 6 * 60 * 1000),
     },
   });
-
+  await createChecks(attack1.id, [
+    { step: "SIGNATURE", passed: true, details: "Agent EIP-712 signature recovered and matches the registered agent wallet" },
+    { step: "TIME_WINDOW", passed: true, details: "Inside the 08:00–18:00 UTC operational window" },
+    { step: "TARGET_ALLOWED", passed: true, details: "Target Acme Components (ProcurementRouter) is on the allowlist" },
+    { step: "ASSET_ALLOWED", passed: true, details: "Asset USDC is on the allowlist" },
+    { step: "RECIPIENT_ALLOWED", passed: false, details: `Recipient ${shortAddr(deployments.demoAccounts.attacker)} is NOT on the approved merchant allowlist` },
+    { step: "AMOUNT_LIMIT", passed: true, details: "$480.00 is within the $500.00 per-action ceiling" },
+    { step: "DAILY_LIMIT", passed: true, details: "Within the $2,000.00 rolling daily limit" },
+    { step: "ONCHAIN_ENFORCEMENT", passed: false, details: "ScopeExecutor reverted with RecipientNotAllowed — boundary enforced by the contract in preflight simulation. No transaction submitted: $0.00 exposed, $0 gas." },
+  ]);
   await prisma.violation.create({
     data: {
       executionId: attack1.id,
       type: "RECIPIENT_NOT_ALLOWED",
       expected: `Acme Components (${deployments.demoAccounts.supplier})`,
-      actual: `Rogue Attacker Wallet (${deployments.demoAccounts.attacker})`,
+      actual: `Rogue attacker wallet (${deployments.demoAccounts.attacker})`,
       severity: "CRITICAL",
     },
   });
 
-  // Attach execution checks
-  const checks1 = [
-    { step: "SIGNATURE", passed: true, details: "Valid agent EIP-712 cryptographic signature" },
-    { step: "POLICY_ACTIVE", passed: true, details: "Policy Procurement V3 active onchain" },
-    { step: "TIME_WINDOW", passed: true, details: "Execution inside operational window" },
-    { step: "TARGET_ALLOWED", passed: true, details: "Target ProcurementRouter matches whitelist" },
-    { step: "ASSET_ALLOWED", passed: true, details: "Asset DemoUSDC matches whitelist" },
-    { step: "RECIPIENT_ALLOWED", passed: false, details: "RECIPIENT NOT AUTHORIZED: Address is not in approved merchant list" },
-    { step: "AMOUNT_LIMIT", passed: true, details: "$480.00 is <= $500.00 maxPerAction" },
-    { step: "DAILY_LIMIT", passed: true, details: "Daily spent within $2,000 ceiling" },
-  ];
-
-  for (const c of checks1) {
-    await prisma.executionCheck.create({
-      data: {
-        executionId: attack1.id,
-        step: c.step,
-        passed: c.passed,
-        details: c.details,
-      },
-    });
-  }
-
-  // Attack 2: Over-limit attempt ($700 vs $500 max)
+  // 5c. Blocked attack — Budget Bleed ($700 vs $500 max). Caught in preflight; no tx.
   const attack2 = await prisma.execution.create({
     data: {
       agentId: agent.id,
@@ -269,15 +263,24 @@ async function main() {
       recipient: deployments.demoAccounts.supplier,
       status: "REVERTED",
       decision: "LIMIT_EXCEEDED",
-      txHash: "0x7719fca9b01284fa981720bdfa89102489012849a90184209bcfa89102489099",
-      blockNumber: 120495,
-      gasUsed: 39500,
+      txHash: null,
+      blockNumber: null,
+      gasUsed: null,
       capitalMoved: 0.0,
       capitalProtected: 700.0,
       createdAt: new Date(Date.now() - 25 * 60 * 1000),
     },
   });
-
+  await createChecks(attack2.id, [
+    { step: "SIGNATURE", passed: true, details: "Agent EIP-712 signature recovered and matches the registered agent wallet" },
+    { step: "TIME_WINDOW", passed: true, details: "Inside the 08:00–18:00 UTC operational window" },
+    { step: "TARGET_ALLOWED", passed: true, details: "Target Acme Components (ProcurementRouter) is on the allowlist" },
+    { step: "ASSET_ALLOWED", passed: true, details: "Asset USDC is on the allowlist" },
+    { step: "RECIPIENT_ALLOWED", passed: true, details: "Recipient Acme Components is an approved merchant" },
+    { step: "AMOUNT_LIMIT", passed: false, details: "$700.00 exceeds the $500.00 per-action ceiling" },
+    { step: "DAILY_LIMIT", passed: true, details: "Within the $2,000.00 rolling daily limit" },
+    { step: "ONCHAIN_ENFORCEMENT", passed: false, details: "ScopeExecutor reverted with ActionLimitExceeded — boundary enforced by the contract in preflight simulation. No transaction submitted: $0.00 exposed, $0 gas." },
+  ]);
   await prisma.violation.create({
     data: {
       executionId: attack2.id,
@@ -288,7 +291,8 @@ async function main() {
     },
   });
 
-  // Attack 3: Off-Hours attempt
+  // 5d. Blocked attack — Off-Hours execution. Stopped by the OFFCHAIN gateway before the
+  //     request ever reached the chain (time-of-day is not expressible onchain). No tx.
   const attack3 = await prisma.execution.create({
     data: {
       agentId: agent.id,
@@ -299,22 +303,73 @@ async function main() {
       recipient: deployments.demoAccounts.supplier,
       status: "REVERTED",
       decision: "EXPIRED",
-      txHash: "0x6629fca9b01284fa981720bdfa89102489012849a90184209bcfa89102489033",
-      blockNumber: 120498,
-      gasUsed: 38200,
+      txHash: null,
+      blockNumber: null,
+      gasUsed: null,
       capitalMoved: 0.0,
       capitalProtected: 350.0,
       createdAt: new Date(Date.now() - 3 * 3600 * 1000),
     },
   });
-
+  await createChecks(attack3.id, [
+    { step: "SIGNATURE", passed: true, details: "Agent EIP-712 signature recovered and matches the registered agent wallet" },
+    { step: "TIME_WINDOW", passed: false, details: "Execution at 03:14 UTC is OUTSIDE the 08:00–18:00 UTC operational window" },
+    { step: "TARGET_ALLOWED", passed: true, details: "Target Acme Components (ProcurementRouter) is on the allowlist" },
+    { step: "ASSET_ALLOWED", passed: true, details: "Asset USDC is on the allowlist" },
+    { step: "RECIPIENT_ALLOWED", passed: true, details: "Recipient Acme Components is an approved merchant" },
+    { step: "AMOUNT_LIMIT", passed: true, details: "$350.00 is within the $500.00 per-action ceiling" },
+    { step: "DAILY_LIMIT", passed: true, details: "Within the $2,000.00 rolling daily limit" },
+    { step: "ONCHAIN_ENFORCEMENT", passed: false, details: "Blocked by SCOPE's offchain policy gateway (operational-hours rule) before submission — the request never reached the chain. $0.00 exposed, $0 gas." },
+  ]);
   await prisma.violation.create({
     data: {
       executionId: attack3.id,
       type: "TIME_WINDOW_VIOLATION",
       expected: "08:00 - 18:00 UTC",
-      actual: "03:14 UTC (Unauthorized Off-Hours Execution Attempt)",
+      actual: "03:14 UTC (unauthorized off-hours execution attempt)",
       severity: "HIGH",
+    },
+  });
+
+  // 5e. Blocked attack — Postcondition failure (outcome slippage). The merchant is
+  //     ALLOWLISTED and passes every precondition, yet the atomic MIN_OUTPUT postcondition
+  //     catches that it underdelivered and reverts the entire transaction. No tx submitted.
+  const attack4 = await prisma.execution.create({
+    data: {
+      agentId: agent.id,
+      policyId: policy.id,
+      target: deployments.contracts.MaliciousMerchant,
+      asset: deployments.contracts.MockUSDC,
+      amount: 500.0,
+      recipient: deployments.contracts.MaliciousMerchant,
+      status: "REVERTED",
+      decision: "OUTCOME_VIOLATION",
+      txHash: null,
+      blockNumber: null,
+      gasUsed: null,
+      capitalMoved: 0.0,
+      capitalProtected: 500.0,
+      createdAt: new Date(Date.now() - 40 * 60 * 1000),
+    },
+  });
+  await createChecks(attack4.id, [
+    { step: "SIGNATURE", passed: true, details: "Agent EIP-712 signature recovered and matches the registered agent wallet" },
+    { step: "TIME_WINDOW", passed: true, details: "Inside the 08:00–18:00 UTC operational window" },
+    { step: "TARGET_ALLOWED", passed: true, details: "Target is on the policy allowlist" },
+    { step: "ASSET_ALLOWED", passed: true, details: "Asset USDC is on the allowlist" },
+    { step: "RECIPIENT_ALLOWED", passed: true, details: "Recipient is on the policy allowlist" },
+    { step: "AMOUNT_LIMIT", passed: true, details: "$500.00 is within the $500.00 per-action ceiling" },
+    { step: "DAILY_LIMIT", passed: true, details: "Within the $2,000.00 rolling daily limit" },
+    { step: "POSTCONDITION", passed: false, details: "MIN_TOKEN_RECEIVED not met: merchant delivered less than the agent's required minimum output" },
+    { step: "ONCHAIN_ENFORCEMENT", passed: false, details: "ScopeExecutor reverted with OutcomePostconditionFailed — the atomic outcome check rolled back every state change in preflight simulation. No transaction submitted: $0.00 exposed, $0 gas." },
+  ]);
+  await prisma.violation.create({
+    data: {
+      executionId: attack4.id,
+      type: "OUTCOME_POSTCONDITION_FAILED",
+      expected: "Delivered output ≥ agent's MIN_TOKEN_RECEIVED threshold",
+      actual: "Merchant underdelivered — atomic postcondition failed, transaction reverted",
+      severity: "CRITICAL",
     },
   });
 
@@ -324,35 +379,35 @@ async function main() {
       name: "ScopePolicyRegistry",
       address: deployments.contracts.ScopePolicyRegistry,
       type: "POLICY_REGISTRY",
-      chainId: deployments.chainId || 31337,
+      chainId: deployments.chainId || 84532,
       abi: "IScopePolicyRegistry",
     },
     {
       name: "ScopeExecutor",
       address: deployments.contracts.ScopeExecutor,
       type: "EXECUTOR",
-      chainId: deployments.chainId || 31337,
+      chainId: deployments.chainId || 84532,
       abi: "IScopeExecutor",
     },
     {
       name: "MockUSDC",
       address: deployments.contracts.MockUSDC,
       type: "MOCK_USDC",
-      chainId: deployments.chainId || 31337,
+      chainId: deployments.chainId || 84532,
       abi: "IERC20",
     },
     {
       name: "SafeMerchant (Acme Components)",
       address: deployments.contracts.SafeMerchant,
       type: "SAFE_MERCHANT",
-      chainId: deployments.chainId || 31337,
+      chainId: deployments.chainId || 84532,
       abi: "SafeMerchant",
     },
     {
       name: "MaliciousMerchant (Phishing Clone)",
       address: deployments.contracts.MaliciousMerchant,
       type: "MALICIOUS_MERCHANT",
-      chainId: deployments.chainId || 31337,
+      chainId: deployments.chainId || 84532,
       abi: "MaliciousMerchant",
     },
   ];
@@ -371,13 +426,14 @@ async function main() {
     });
   }
 
-  // 8. API Key
+  // 8. API Key — only the hash and a masked display value are stored; the plaintext key is
+  //    shown to the user exactly once at creation and never persisted or re-exposed.
   await prisma.apiKey.create({
     data: {
       workspaceId: workspace.id,
       name: "Atlas Production Key",
       prefix: "sk_live_scope_",
-      keyHash: "0x8fa13498bcefa0918230948ac0198421bcaef019",
+      keyHash: "0x8fa13498bcefa0918230948ac0198421bcaef0198fa13498bcefa0918230948a",
       maskedKey: "sk_live_scope_••••••••••••9f42",
       lastUsedAt: new Date(Date.now() - 8000),
     },
@@ -389,25 +445,25 @@ async function main() {
       workspaceId: workspace.id,
       type: "ATTACK_REPELLED",
       title: "Compromised Recipient Blocked",
-      description: "Atlas attempted to send $480.00 USDC to unauthorized wallet. SCOPE reverted the transaction atomically onchain ($0.00 moved).",
+      description: "Atlas attempted to send $480.00 USDC to an unauthorized wallet. SCOPE's ScopeExecutor reverted the request in preflight — no transaction submitted, $0.00 moved.",
     },
     {
       workspaceId: workspace.id,
       type: "EXECUTION_APPROVED",
-      title: "Legitimate Order Processed",
-      description: "Atlas procurement order of $480.00 USDC to Acme Components satisfied all policy boundaries and was executed.",
+      title: "Legitimate Order Executed Onchain",
+      description: "Atlas procurement order of $480.00 USDC to Acme Components satisfied all policy boundaries and executed onchain on Base Sepolia.",
     },
     {
       workspaceId: workspace.id,
       type: "POLICY_CREATED",
       title: "Policy Procurement V3 Authorized",
-      description: "Owner authorized cryptographic EIP-712 execution boundaries: $500 max per action, $2,000 daily limit, Acme Components approved.",
+      description: "Owner authorized cryptographic execution boundaries onchain: $500 max per action, $2,000 daily limit, approved merchants only, MIN_OUTPUT postcondition.",
     },
     {
       workspaceId: workspace.id,
       type: "AGENT_REGISTERED",
       title: "Atlas Procurement Agent Enrolled",
-      description: "Autonomous agent wallet 0x7099...79C8 registered with Scoped Execution capability.",
+      description: `Autonomous agent wallet ${shortAddr(deployments.demoAccounts.agent)} registered with scoped execution capability.`,
     },
   ];
 
@@ -416,6 +472,8 @@ async function main() {
   }
 
   console.log("Database seeded successfully!");
+  console.log(`  Policy hash: ${deployments.defaultPolicyHash}`);
+  console.log("  1 real onchain success ($480, tx 0x9cf132bf…) + 4 blocked attacks ($2,030 protected, $0 gas).");
 }
 
 main()

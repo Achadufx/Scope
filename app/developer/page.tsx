@@ -263,7 +263,7 @@ else:
               <h3 className="text-sm font-bold text-primary">Live API Response: POST /api/v1/executions/propose</h3>
             </div>
             {apiResponse && (
-              <span className="rounded bg-success-surface border border-success-border px-2 py-0.2 text-[10px] font-semibold text-success font-mono">
+              <span className="rounded bg-success-surface border border-success-border px-2 py-0.5 text-[10px] font-semibold text-success font-mono">
                 200 OK
               </span>
             )}

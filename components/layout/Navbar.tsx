@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ConnectWallet from "@/components/wallet/ConnectWallet";
 import {
   ShieldAlert,
   Sliders,
@@ -68,7 +69,7 @@ export default function Navbar() {
                   <Icon className="h-3.5 w-3.5" />
                   <span>{item.name}</span>
                   {item.badge && !isActive && (
-                    <span className="rounded-full bg-danger-surface px-1.5 py-0.2 text-[9px] font-semibold text-danger border border-danger-border">
+                    <span className="rounded-full bg-danger-surface px-1.5 py-0.5 text-[9px] font-semibold text-danger border border-danger-border">
                       {item.badge}
                     </span>
                   )}
@@ -88,11 +89,13 @@ export default function Navbar() {
 
           <Link
             href="/attack-lab"
-            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-surface shadow-sm hover:bg-accent-hover transition-colors"
+            className="hidden sm:flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-surface shadow-sm hover:bg-accent-hover transition-colors"
           >
             <ShieldAlert className="h-3.5 w-3.5" />
             <span>Launch Attack</span>
           </Link>
+
+          <ConnectWallet />
 
           <Link
             href="/settings"

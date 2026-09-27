@@ -90,7 +90,7 @@ export default function ContractsPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="text-base font-bold text-primary">{c.name}</h3>
-                      <span className="inline-flex items-center gap-1 rounded bg-success-surface border border-success-border px-2 py-0.2 text-[10px] font-semibold text-success font-mono">
+                      <span className="inline-flex items-center gap-1 rounded bg-success-surface border border-success-border px-2 py-0.5 text-[10px] font-semibold text-success font-mono">
                         <CheckCircle2 className="h-3 w-3" />
                         <span>VERIFIED</span>
                       </span>

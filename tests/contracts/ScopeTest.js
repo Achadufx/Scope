@@ -286,4 +286,181 @@ describe("SCOPE Smart Contract Suite", function () {
     }
     expect(failed).to.be.true;
   });
+
+  it("7. Unauthorized Agent: a request from an agent with no active policy reverts with UnauthorizedAgent", async function () {
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const req = {
+      agent: attackerWallet.account.address, // no policy registered for attacker
+      target: safeMerchant.address,
+      asset: mockUSDC.address,
+      recipient: supplierWallet.account.address,
+      value: parseUnits("10", 6),
+      callData: "0x",
+      nonce: 101n,
+      deadline,
+      postconditionType: 0,
+      postconditionToken: "0x0000000000000000000000000000000000000000",
+      postconditionValue: 0n,
+    };
+    const sig = await signExecutionRequest(req, attackerWallet);
+
+    let failed = false;
+    try {
+      await executor.write.execute([req, sig]);
+    } catch (err) {
+      failed = true;
+      expect(err.message).to.include("UnauthorizedAgent");
+    }
+    expect(failed).to.be.true;
+  });
+
+  it("8. Deadline Expired: a request past its deadline reverts with DeadlineExpired", async function () {
+    const deadline = BigInt(Math.floor(Date.now() / 1000) - 3600); // 1 hour ago
+    const req = {
+      agent: agentWallet.account.address,
+      target: safeMerchant.address,
+      asset: mockUSDC.address,
+      recipient: supplierWallet.account.address,
+      value: parseUnits("50", 6),
+      callData: "0x",
+      nonce: 102n,
+      deadline,
+      postconditionType: 0,
+      postconditionToken: "0x0000000000000000000000000000000000000000",
+      postconditionValue: 0n,
+    };
+    const sig = await signExecutionRequest(req, agentWallet);
+
+    let failed = false;
+    try {
+      await executor.write.execute([req, sig]);
+    } catch (err) {
+      failed = true;
+      expect(err.message).to.include("DeadlineExpired");
+    }
+    expect(failed).to.be.true;
+  });
+
+  it("9. Deny-by-default Recipients: an empty recipient allowlist blocks all recipients", async function () {
+    const clients = await hre.viem.getWalletClients();
+    const restrictedAgent = clients[4];
+    const validAfter = BigInt(Math.floor(Date.now() / 1000) - 3600);
+    const validUntil = BigInt(Math.floor(Date.now() / 1000) + 7 * 86400);
+
+    await registry.write.createPolicy([
+      restrictedAgent.account.address,
+      [safeMerchant.address], // targets
+      [mockUSDC.address], // assets
+      [], // EMPTY recipients -> deny-by-default
+      MAX_PER_ACTION,
+      DAILY_LIMIT,
+      validAfter,
+      validUntil,
+    ]);
+
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const req = {
+      agent: restrictedAgent.account.address,
+      target: safeMerchant.address,
+      asset: mockUSDC.address,
+      recipient: supplierWallet.account.address,
+      value: parseUnits("50", 6),
+      callData: "0x",
+      nonce: 1n,
+      deadline,
+      postconditionType: 0,
+      postconditionToken: "0x0000000000000000000000000000000000000000",
+      postconditionValue: 0n,
+    };
+    const sig = await signExecutionRequest(req, restrictedAgent);
+
+    let failed = false;
+    try {
+      await executor.write.execute([req, sig]);
+    } catch (err) {
+      failed = true;
+      expect(err.message).to.include("RecipientNotAllowed");
+    }
+    expect(failed).to.be.true;
+  });
+
+  it("10. MAX_TOKEN_SPENT Postcondition: spending beyond the cap reverts atomically", async function () {
+    const value = parseUnits("200", 6);
+    const maxSpend = parseUnits("100", 6); // actual spend (200) exceeds this cap
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const req = {
+      agent: agentWallet.account.address,
+      target: safeMerchant.address,
+      asset: mockUSDC.address,
+      recipient: supplierWallet.account.address,
+      value,
+      callData: "0x",
+      nonce: 103n,
+      deadline,
+      postconditionType: 2, // MAX_TOKEN_SPENT
+      postconditionToken: mockUSDC.address,
+      postconditionValue: maxSpend,
+    };
+    const sig = await signExecutionRequest(req, agentWallet);
+
+    let failed = false;
+    try {
+      await executor.write.execute([req, sig]);
+    } catch (err) {
+      failed = true;
+      expect(err.message).to.include("OutcomePostconditionFailed");
+    }
+    expect(failed).to.be.true;
+  });
+
+  it("11. Daily Limit: cumulative spend beyond the daily ceiling reverts with DailyLimitExceeded", async function () {
+    const clients = await hre.viem.getWalletClients();
+    const dailyAgent = clients[5];
+    const validAfter = BigInt(Math.floor(Date.now() / 1000) - 3600);
+    const validUntil = BigInt(Math.floor(Date.now() / 1000) + 7 * 86400);
+    const lowDaily = parseUnits("300", 6);
+
+    // Fund + approve so the request fails on the daily-limit check, not on transfer.
+    await mockUSDC.write.faucet([dailyAgent.account.address, parseUnits("5000", 6)]);
+    const dailyUsdc = await hre.viem.getContractAt("MockUSDC", mockUSDC.address, {
+      client: { wallet: dailyAgent },
+    });
+    await dailyUsdc.write.approve([executor.address, parseUnits("5000", 6)]);
+
+    await registry.write.createPolicy([
+      dailyAgent.account.address,
+      [safeMerchant.address],
+      [mockUSDC.address],
+      [supplierWallet.account.address],
+      MAX_PER_ACTION, // 500 per action
+      lowDaily, // 300 daily ceiling
+      validAfter,
+      validUntil,
+    ]);
+
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const req = {
+      agent: dailyAgent.account.address,
+      target: safeMerchant.address,
+      asset: mockUSDC.address,
+      recipient: supplierWallet.account.address,
+      value: parseUnits("400", 6), // under the 500 per-action cap, but over the 300 daily
+      callData: "0x",
+      nonce: 1n,
+      deadline,
+      postconditionType: 0,
+      postconditionToken: "0x0000000000000000000000000000000000000000",
+      postconditionValue: 0n,
+    };
+    const sig = await signExecutionRequest(req, dailyAgent);
+
+    let failed = false;
+    try {
+      await executor.write.execute([req, sig]);
+    } catch (err) {
+      failed = true;
+      expect(err.message).to.include("DailyLimitExceeded");
+    }
+    expect(failed).to.be.true;
+  });
 });

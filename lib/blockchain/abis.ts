@@ -110,6 +110,13 @@ export const ScopePolicyRegistryABI = [
     outputs: [{ internalType: "bool", name: "", type: "bool" }],
     stateMutability: "view",
     type: "function"
+  },
+  {
+    inputs: [{ internalType: "address", name: "agent", type: "address" }],
+    name: "agentActivePolicy",
+    outputs: [{ internalType: "bytes32", name: "", type: "bytes32" }],
+    stateMutability: "view",
+    type: "function"
   }
 ] as const;
 
@@ -179,12 +186,38 @@ export const ScopeExecutorABI = [
     stateMutability: "view",
     type: "function"
   },
-  // Custom Errors
+  // Events
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "bytes32", name: "executionId", type: "bytes32" },
+      { indexed: true, internalType: "address", name: "agent", type: "address" },
+      { indexed: true, internalType: "bytes32", name: "policyHash", type: "bytes32" },
+      { indexed: false, internalType: "address", name: "target", type: "address" },
+      { indexed: false, internalType: "address", name: "recipient", type: "address" },
+      { indexed: false, internalType: "uint256", name: "value", type: "uint256" }
+    ],
+    name: "ExecutionApproved",
+    type: "event"
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: "bytes32", name: "executionId", type: "bytes32" },
+      { indexed: true, internalType: "address", name: "agent", type: "address" },
+      { indexed: false, internalType: "address", name: "target", type: "address" },
+      { indexed: false, internalType: "uint256", name: "value", type: "uint256" },
+      { indexed: false, internalType: "bytes", name: "returnData", type: "bytes" }
+    ],
+    name: "ExecutionCompleted",
+    type: "event"
+  },
+  // Custom Errors (names must match ScopeExecutor.sol exactly for revert decoding)
   { inputs: [], name: "InvalidSignature", type: "error" },
+  { inputs: [], name: "UnauthorizedAgent", type: "error" },
   { inputs: [{ internalType: "uint256", name: "nonce", type: "uint256" }], name: "NonceAlreadyUsed", type: "error" },
   { inputs: [{ internalType: "uint256", name: "deadline", type: "uint256" }, { internalType: "uint256", name: "currentTimestamp", type: "uint256" }], name: "DeadlineExpired", type: "error" },
-  { inputs: [], name: "PolicyInactiveOrNotFound", type: "error" },
-  { inputs: [{ internalType: "uint256", name: "currentTimestamp", type: "uint256" }, { internalType: "uint256", name: "validAfter", type: "uint256" }, { internalType: "uint256", name: "validUntil", type: "uint256" }], name: "PolicyTimeWindowViolation", type: "error" },
+  { inputs: [], name: "PolicyInactiveOrExpired", type: "error" },
   { inputs: [{ internalType: "address", name: "target", type: "address" }], name: "TargetNotAllowed", type: "error" },
   { inputs: [{ internalType: "address", name: "asset", type: "address" }], name: "AssetNotAllowed", type: "error" },
   { inputs: [{ internalType: "address", name: "recipient", type: "address" }], name: "RecipientNotAllowed", type: "error" },
@@ -235,6 +268,27 @@ export const MockUSDCABI = [
     name: "faucet",
     outputs: [],
     stateMutability: "nonpayable",
+    type: "function"
+  },
+  {
+    inputs: [
+      { internalType: "address", name: "holder", type: "address" },
+      { internalType: "address", name: "spender", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" }
+    ],
+    name: "demoProvision",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function"
+  },
+  {
+    inputs: [
+      { internalType: "address", name: "owner", type: "address" },
+      { internalType: "address", name: "spender", type: "address" }
+    ],
+    name: "allowance",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
     type: "function"
   }
 ] as const;

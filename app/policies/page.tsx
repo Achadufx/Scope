@@ -2,20 +2,28 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useAccount } from "wagmi";
 import {
   Sliders,
   Plus,
   ShieldCheck,
   CheckCircle2,
-  Clock,
-  Layers,
   ArrowRight,
-  FileCode2,
   Lock,
-  X,
   RefreshCw,
-  Cpu,
+  AlertTriangle,
+  ExternalLink,
+  Wallet,
 } from "lucide-react";
+import AddressPill from "@/components/ui/AddressPill";
+import StatusBadge from "@/components/ui/StatusBadge";
+import Drawer from "@/components/ui/Drawer";
+import CustomSelect from "@/components/ui/CustomSelect";
+import EmptyState from "@/components/ui/EmptyState";
+import ConnectWallet from "@/components/wallet/ConnectWallet";
+import deployments from "@/lib/blockchain/deployments.json";
+import { explorerTxUrl, scopeChain } from "@/lib/blockchain/chain";
+import { useAuthorizePolicy, type AuthorizeStatus } from "@/lib/wallet/useAuthorizePolicy";
 
 interface PolicyItem {
   id: string;
@@ -32,30 +40,69 @@ interface PolicyItem {
   _count?: { executions: number };
 }
 
+// Onchain directory — the deployed, allowlistable entities. createPolicy takes real
+// addresses (deny-by-default), so the builder works from these, never free text.
+const DIRECTORY = {
+  asset: { address: deployments.contracts.MockUSDC, name: "Demo USDC", symbol: "USDC" },
+  targets: [
+    { address: deployments.contracts.SafeMerchant, name: "ProcurementRouter", tag: "Safe" },
+    { address: deployments.contracts.MaliciousMerchant, name: "MaliciousMerchant", tag: "Honeypot" },
+  ],
+  recipients: [
+    { address: deployments.demoAccounts.supplier, name: "Acme Components", tag: "Safe supplier" },
+    { address: deployments.contracts.MaliciousMerchant, name: "MaliciousMerchant", tag: "Honeypot" },
+  ],
+};
+
+const STATUS_COPY: Record<Exclude<AuthorizeStatus, "idle" | "done" | "error">, { title: string; detail: string }> = {
+  signing: {
+    title: "Confirm in your wallet",
+    detail: "Sign the createPolicy transaction. This registers the execution envelope onchain — you pay the gas.",
+  },
+  confirming: {
+    title: "Confirming on " + scopeChain.name,
+    detail: "Transaction submitted. Waiting for it to be mined and the policy activated in the registry.",
+  },
+  reading: {
+    title: "Reading authorized policyHash",
+    detail: "Fetching the authoritative bytes32 policyHash back from ScopePolicyRegistry — never fabricated.",
+  },
+  persisting: {
+    title: "Recording authorization",
+    detail: "Saving the real onchain policyHash so the control plane mirrors the chain.",
+  },
+};
+
 export default function PoliciesPage() {
   const [policies, setPolicies] = useState<PolicyItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showBuilder, setShowBuilder] = useState(false);
-  const [authorizing, setAuthorizing] = useState(false);
-  const [authStep, setAuthStep] = useState<"FORM" | "SIGNING" | "CONFIRMED">("FORM");
+  const [showDrawer, setShowDrawer] = useState(false);
 
-  // Form State
+  const { isConnected, chainId, address } = useAccount();
+  const { authorize, reset, status, error, txHash, policyHash } = useAuthorizePolicy();
+
+  // Form state
   const [policyName, setPolicyName] = useState("Procurement V3");
   const [maxPerAction, setMaxPerAction] = useState("500");
   const [dailyLimit, setDailyLimit] = useState("2000");
-  const [allowedAsset, setAllowedAsset] = useState("Demo USDC (0x5FbD...0aa3)");
-  const [approvedRecipients, setApprovedRecipients] = useState("Acme Components, Northstar Supplies");
-  const [approvedContracts, setApprovedContracts] = useState("ProcurementRouter (0xCf7E...0Fc9)");
+  const [selectedTargets, setSelectedTargets] = useState<string[]>(DIRECTORY.targets.map((t) => t.address));
+  const [selectedRecipients, setSelectedRecipients] = useState<string[]>(DIRECTORY.recipients.map((r) => r.address));
   const [timeWindow, setTimeWindow] = useState("08:00 - 18:00 UTC");
   const [unknownRecipientAction, setUnknownRecipientAction] = useState("BLOCK");
   const [outcomeRequirement, setOutcomeRequirement] = useState("MIN_TOKEN_RECEIVED (Slippage max 0.5%)");
+
+  const [resolvedAgent, setResolvedAgent] = useState<{ id: string; walletAddress: string } | null>(null);
 
   const fetchPolicies = async () => {
     try {
       const res = await fetch("/api/v1/policies");
       if (res.ok) {
         const json = await res.json();
-        setPolicies(json.policies || []);
+        const list: PolicyItem[] = json.policies || [];
+        setPolicies(list);
+        if (list[0]?.agent) {
+          setResolvedAgent({ id: list[0].agent.id, walletAddress: list[0].agent.walletAddress });
+        }
       }
     } catch (err) {
       console.error(err);
@@ -68,64 +115,90 @@ export default function PoliciesPage() {
     fetchPolicies();
   }, []);
 
-  const handleAuthorize = async () => {
-    setAuthStep("SIGNING");
-    setAuthorizing(true);
-
-    // Simulate EIP-712 signature timing
-    await new Promise((r) => setTimeout(r, 900));
-
-    try {
-      const res = await fetch("/api/v1/policies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agentId: policies[0]?.agent?.id || "atlas",
-          name: policyName,
-          maxPerAction: parseFloat(maxPerAction),
-          dailyLimit: parseFloat(dailyLimit),
-          timeWindow,
-          minOutput: outcomeRequirement,
-        }),
-      });
-
-      if (res.ok) {
-        setAuthStep("CONFIRMED");
-        await fetchPolicies();
-        setTimeout(() => {
-          setShowBuilder(false);
-          setAuthStep("FORM");
-          setAuthorizing(false);
-        }, 1200);
+  // Ensure we have a real agent id/address even before any policy exists.
+  useEffect(() => {
+    if (resolvedAgent) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/v1/agents");
+        if (res.ok) {
+          const json = await res.json();
+          const agents = json.agents || [];
+          const atlas = agents.find((a: any) => /atlas/i.test(a.name)) || agents[0];
+          if (atlas) setResolvedAgent({ id: atlas.id, walletAddress: atlas.walletAddress });
+        }
+      } catch {
+        /* non-fatal */
       }
-    } catch (err) {
-      console.error(err);
-      setAuthStep("FORM");
-      setAuthorizing(false);
+    })();
+  }, [resolvedAgent]);
+
+  const toggle = (list: string[], setList: (v: string[]) => void, addr: string) => {
+    setList(list.includes(addr) ? list.filter((a) => a !== addr) : [...list, addr]);
+  };
+
+  const wrongNetwork = isConnected && chainId !== scopeChain.id;
+  const canAuthorize =
+    isConnected &&
+    !wrongNetwork &&
+    !!resolvedAgent &&
+    selectedTargets.length > 0 &&
+    selectedRecipients.length > 0 &&
+    parseFloat(maxPerAction) > 0 &&
+    parseFloat(dailyLimit) > 0;
+
+  const busy = status === "signing" || status === "confirming" || status === "reading" || status === "persisting";
+
+  const handleAuthorize = async () => {
+    if (!resolvedAgent) return;
+    const result = await authorize({
+      agentId: resolvedAgent.id,
+      agentAddress: resolvedAgent.walletAddress || deployments.demoAccounts.agent,
+      name: policyName,
+      allowedTargets: selectedTargets,
+      allowedAssets: [DIRECTORY.asset.address],
+      allowedRecipients: selectedRecipients,
+      maxPerAction,
+      dailyLimit,
+      timeWindow,
+      minOutput: outcomeRequirement,
+    });
+    if (result) {
+      await fetchPolicies();
     }
   };
 
+  const closeDrawer = () => {
+    setShowDrawer(false);
+    reset();
+  };
+
+  const recipientActionOptions = [
+    { value: "BLOCK", label: "HARD REVERT (Atomic onchain revert)", description: "Transactions to unknown addresses instantly revert" },
+    { value: "HUMAN_APPROVAL", label: "Require Human Multisig", description: "Escalate to admin wallet for co-signature" },
+  ];
+
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
       {/* Header */}
-      <div className="border-b border-border pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="border-b border-border pb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-primary">Execution Policies</h1>
-            <span className="rounded-md bg-accent-light px-2 py-0.5 text-xs font-semibold text-accent font-mono">
-              Onchain Cryptographic Envelopes
+            <h1 className="text-2xl font-bold tracking-tight text-primary font-sans">Execution Policies</h1>
+            <span className="rounded bg-accent-light px-2 py-0.5 text-[10px] font-semibold text-accent font-mono uppercase tracking-wider border border-accent/20">
+              Onchain Registry
             </span>
           </div>
-          <p className="text-xs text-secondary mt-1">
-            Define, authorize, and verify machine-enforced economic constraints for autonomous agents.
+          <p className="text-xs text-secondary mt-1 tracking-tight">
+            Define, authorize, and enforce cryptographic economic boundaries for autonomous agents.
           </p>
         </div>
 
         <button
-          onClick={() => setShowBuilder(true)}
-          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-2 text-xs font-semibold text-surface shadow hover:bg-primary-hover transition-colors"
+          onClick={() => setShowDrawer(true)}
+          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-surface shadow-subtle hover:bg-primary-hover transition-colors"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
           <span>New Policy</span>
         </button>
       </div>
@@ -134,57 +207,58 @@ export default function PoliciesPage() {
       {loading ? (
         <div className="flex items-center justify-center py-20 text-secondary gap-2 text-xs font-mono">
           <RefreshCw className="h-4 w-4 animate-spin text-accent" />
-          <span>Loading execution policies...</span>
+          <span>Syncing policy registry...</span>
         </div>
       ) : policies.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-surface p-12 text-center space-y-3">
-          <Sliders className="h-8 w-8 text-secondary mx-auto" />
-          <h3 className="text-sm font-bold text-primary">No policies yet.</h3>
-          <p className="text-xs text-secondary max-w-sm mx-auto">
-            Create an execution policy to give your first agent scoped autonomy.
-          </p>
-          <button
-            onClick={() => setShowBuilder(true)}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-surface"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>Create Policy</span>
-          </button>
-        </div>
+        <EmptyState
+          icon={Sliders}
+          title="No execution policies registered"
+          description="Register an economic execution envelope to grant an autonomous agent delegated authority."
+          action={{
+            label: "Create Policy Envelope",
+            onClick: () => setShowDrawer(true),
+          }}
+        />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {policies.map((p) => (
-            <div key={p.id} className="rounded-xl border border-border bg-surface p-6 shadow-sm space-y-4">
+            <div key={p.id} className="rounded-lg border border-border bg-surface p-5 shadow-card space-y-4">
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-primary">{p.name}</h3>
-                    <span className="rounded-full bg-success-surface border border-success-border px-2 py-0.2 text-[10px] font-semibold text-success uppercase">
-                      ACTIVE
-                    </span>
+                    <h3 className="text-base font-bold text-primary font-sans">{p.name}</h3>
+                    <StatusBadge status={p.active ? "ACTIVE" : "PAUSED"} size="sm" />
                   </div>
-                  <div className="text-xs text-secondary font-mono mt-1">
-                    Agent: <strong className="text-primary">{p.agent?.name}</strong> ({p.agent?.walletAddress?.slice(0, 6)}...{p.agent?.walletAddress?.slice(-4)})
+                  <div className="flex items-center gap-2 mt-1.5 text-xs text-secondary">
+                    <span>Agent: <strong className="text-primary font-medium">{p.agent?.name}</strong></span>
+                    <span>•</span>
+                    <AddressPill address={p.agent?.walletAddress} truncate={true} prefixChars={6} suffixChars={4} />
                   </div>
                 </div>
 
-                <div className="text-right font-mono text-[11px] text-secondary">
-                  <div>Hash: {p.policyHash.slice(0, 10)}...</div>
-                  <div className="text-[10px] text-accent">EIP-712 Verified</div>
+                <div className="text-right">
+                  <AddressPill
+                    address={p.policyHash}
+                    label="Hash:"
+                    truncate={true}
+                    prefixChars={6}
+                    suffixChars={4}
+                  />
+                  <div className="text-[10px] font-mono text-accent mt-0.5">{p.active ? "Active onchain" : "Retired"}</div>
                 </div>
               </div>
 
               {/* Policy Limits strip */}
-              <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-background border border-border">
+              <div className="grid grid-cols-2 gap-3 p-3 rounded-md bg-background border border-border">
                 <div>
-                  <div className="text-[10px] uppercase font-mono text-secondary">Max Per Action</div>
-                  <div className="text-lg font-bold text-primary font-mono tabular-nums">
+                  <div className="text-[10px] uppercase font-mono text-secondary tracking-wider">Max Per Action</div>
+                  <div className="text-base font-bold text-primary font-mono tabular-nums">
                     ${p.maxPerAction.toFixed(2)} USDC
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase font-mono text-secondary">Daily Limit (24h)</div>
-                  <div className="text-lg font-bold text-primary font-mono tabular-nums">
+                  <div className="text-[10px] uppercase font-mono text-secondary tracking-wider">Daily Ceiling (24h)</div>
+                  <div className="text-base font-bold text-primary font-mono tabular-nums">
                     ${p.dailyLimit.toFixed(2)} USDC
                   </div>
                 </div>
@@ -192,15 +266,15 @@ export default function PoliciesPage() {
 
               {/* Rules List */}
               <div className="space-y-1.5 text-xs">
-                <div className="text-[11px] font-mono font-semibold uppercase text-secondary">Enforced Rules</div>
+                <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-secondary">Enforced Boundary Rules</div>
                 <div className="flex flex-wrap gap-1.5">
                   {p.rules.map((rule) => (
                     <span
                       key={rule.id}
-                      className="inline-flex items-center gap-1 rounded bg-background border border-border px-2 py-1 text-[11px] font-mono text-primary"
+                      className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-0.5 text-[11px] font-mono text-primary"
                     >
                       <span className="text-secondary">{rule.type}:</span>
-                      <span className="font-semibold truncate max-w-[150px]">{rule.value}</span>
+                      <span className="font-medium truncate max-w-[150px]">{rule.value}</span>
                     </span>
                   ))}
                 </div>
@@ -208,12 +282,12 @@ export default function PoliciesPage() {
 
               {/* Footer */}
               <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-secondary">
-                <span>Valid until: {new Date(p.validUntil).toLocaleDateString()}</span>
+                <span className="text-[11px]">Valid until: {new Date(p.validUntil).toLocaleDateString()}</span>
                 <Link
                   href="/simulator"
-                  className="text-accent font-semibold hover:underline inline-flex items-center gap-1"
+                  className="text-xs font-semibold text-accent hover:underline inline-flex items-center gap-1"
                 >
-                  <span>Test Policy</span>
+                  <span>Simulate Policy</span>
                   <ArrowRight className="h-3 w-3" />
                 </Link>
               </div>
@@ -222,211 +296,307 @@ export default function PoliciesPage() {
         </div>
       )}
 
-      {/* Policy Builder Modal / Drawer */}
-      {showBuilder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary/40 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="relative w-full max-w-4xl rounded-2xl bg-surface border border-border shadow-xl p-6 sm:p-8 space-y-6 my-8">
-            <div className="flex items-center justify-between border-b border-border pb-4">
+      {/* Slide-over Policy Builder Drawer */}
+      <Drawer
+        isOpen={showDrawer}
+        onClose={closeDrawer}
+        title="Create Economic Execution Policy"
+        subtitle="Define machine-enforceable boundaries, then authorize them onchain with your wallet."
+        width="xl"
+      >
+        {busy ? (
+          <div className="py-16 text-center space-y-4">
+            <RefreshCw className="h-8 w-8 animate-spin text-accent mx-auto" />
+            <h3 className="text-base font-bold text-primary font-sans">
+              {STATUS_COPY[status as keyof typeof STATUS_COPY]?.title}
+            </h3>
+            <p className="text-xs text-secondary max-w-sm mx-auto leading-relaxed">
+              {STATUS_COPY[status as keyof typeof STATUS_COPY]?.detail}
+            </p>
+            <div className="inline-block rounded-md bg-background p-3 font-mono text-xs text-secondary border border-border text-left space-y-1">
+              <div>registry: {deployments.contracts.ScopePolicyRegistry.slice(0, 14)}…</div>
+              <div>fn: createPolicy(agent, targets[], assets[], recipients[], …)</div>
+              <div>maxPerAction: {maxPerAction} USDC · dailyLimit: {dailyLimit} USDC</div>
+              {txHash && (
+                <div className="pt-1 border-t border-border">
+                  tx: {txHash.slice(0, 18)}… ({status === "confirming" ? "pending" : "mined"})
+                </div>
+              )}
+            </div>
+          </div>
+        ) : status === "done" ? (
+          <div className="py-14 text-center space-y-4">
+            <CheckCircle2 className="h-10 w-10 text-success mx-auto" />
+            <h3 className="text-base font-bold text-primary font-sans">Policy Authorized Onchain</h3>
+            <p className="text-xs text-secondary max-w-sm mx-auto">
+              The execution envelope is registered and active in ScopePolicyRegistry. The agent can now only act
+              within these boundaries — anything outside reverts.
+            </p>
+            <div className="mx-auto max-w-md rounded-md border border-border bg-background p-4 text-left space-y-2.5 font-mono text-[11px]">
               <div>
-                <h2 className="text-lg font-bold text-primary">Define what Atlas is allowed to do</h2>
-                <p className="text-xs text-secondary">
-                  Construct economic execution boundary. Requires EIP-712 typed signature to authorize.
+                <div className="text-secondary mb-0.5">Authoritative policyHash</div>
+                <div className="text-primary break-all">{policyHash}</div>
+              </div>
+              <div className="pt-2 border-t border-border">
+                <div className="text-secondary mb-0.5">Authorization tx</div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-primary break-all">{txHash?.slice(0, 26)}…</span>
+                  {explorerTxUrl(txHash) && (
+                    <a
+                      href={explorerTxUrl(txHash)!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent hover:underline inline-flex items-center gap-1 shrink-0 font-sans font-semibold"
+                    >
+                      BaseScan <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={closeDrawer}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-xs font-semibold text-surface hover:bg-primary-hover transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Form Fields */}
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="font-semibold text-primary block mb-1">Policy Identifier</label>
+                <input
+                  type="text"
+                  value={policyName}
+                  onChange={(e) => setPolicyName(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-medium focus:ring-1 focus:ring-accent focus:border-accent shadow-subtle focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-primary block mb-1">Max Per Action (Cap)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-secondary font-mono">$</span>
+                    <input
+                      type="number"
+                      value={maxPerAction}
+                      onChange={(e) => setMaxPerAction(e.target.value)}
+                      className="w-full rounded-md border border-border bg-background pl-6 pr-3 py-2 text-primary font-mono tabular-nums focus:ring-1 focus:ring-accent focus:border-accent shadow-subtle focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="font-semibold text-primary block mb-1">Daily Ceiling (24h)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-secondary font-mono">$</span>
+                    <input
+                      type="number"
+                      value={dailyLimit}
+                      onChange={(e) => setDailyLimit(e.target.value)}
+                      className="w-full rounded-md border border-border bg-background pl-6 pr-3 py-2 text-primary font-mono tabular-nums focus:ring-1 focus:ring-accent focus:border-accent shadow-subtle focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Settlement asset — fixed, deny-by-default on everything else */}
+              <div>
+                <label className="font-semibold text-primary block mb-1">Allowed Settlement Asset</label>
+                <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
+                  <span className="font-mono text-primary">{DIRECTORY.asset.name} ({DIRECTORY.asset.symbol})</span>
+                  <AddressPill address={DIRECTORY.asset.address} truncate prefixChars={6} suffixChars={4} />
+                </div>
+              </div>
+
+              {/* Targets */}
+              <div>
+                <label className="font-semibold text-primary block mb-1">Approved Contract Targets</label>
+                <div className="space-y-1.5">
+                  {DIRECTORY.targets.map((t) => {
+                    const on = selectedTargets.includes(t.address);
+                    return (
+                      <button
+                        type="button"
+                        key={"t-" + t.address}
+                        onClick={() => toggle(selectedTargets, setSelectedTargets, t.address)}
+                        className={`w-full flex items-center justify-between rounded-md border px-3 py-2 transition-colors ${
+                          on ? "border-accent bg-accent-light" : "border-border bg-background hover:border-secondary"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className={`h-3.5 w-3.5 rounded-sm border flex items-center justify-center ${on ? "bg-accent border-accent" : "border-secondary"}`}>
+                            {on && <CheckCircle2 className="h-3 w-3 text-surface" />}
+                          </span>
+                          <span className="font-mono text-primary">{t.name}</span>
+                          <span className={`rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${t.tag === "Honeypot" ? "bg-danger-surface text-danger" : "bg-success-surface text-success"}`}>
+                            {t.tag}
+                          </span>
+                        </span>
+                        <AddressPill address={t.address} truncate prefixChars={6} suffixChars={4} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Recipients */}
+              <div>
+                <label className="font-semibold text-primary block mb-1">Approved Recipients (Merchants)</label>
+                <div className="space-y-1.5">
+                  {DIRECTORY.recipients.map((r) => {
+                    const on = selectedRecipients.includes(r.address);
+                    return (
+                      <button
+                        type="button"
+                        key={"r-" + r.address}
+                        onClick={() => toggle(selectedRecipients, setSelectedRecipients, r.address)}
+                        className={`w-full flex items-center justify-between rounded-md border px-3 py-2 transition-colors ${
+                          on ? "border-accent bg-accent-light" : "border-border bg-background hover:border-secondary"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className={`h-3.5 w-3.5 rounded-sm border flex items-center justify-center ${on ? "bg-accent border-accent" : "border-secondary"}`}>
+                            {on && <CheckCircle2 className="h-3 w-3 text-surface" />}
+                          </span>
+                          <span className="font-mono text-primary">{r.name}</span>
+                          <span className={`rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${r.tag === "Honeypot" ? "bg-danger-surface text-danger" : "bg-success-surface text-success"}`}>
+                            {r.tag}
+                          </span>
+                        </span>
+                        <AddressPill address={r.address} truncate prefixChars={6} suffixChars={4} />
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[10px] text-secondary leading-relaxed">
+                  The honeypot is deliberately allowlisted to prove allowlisting is necessary but{" "}
+                  <strong className="text-primary">not sufficient</strong> — the onchain postcondition still catches the
+                  slippage drain.
                 </p>
               </div>
-              <button
-                onClick={() => {
-                  setShowBuilder(false);
-                  setAuthStep("FORM");
-                }}
-                className="p-1 rounded-md text-secondary hover:text-primary hover:bg-background"
-              >
-                <X className="h-5 w-5" />
-              </button>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-primary block mb-1">
+                    Operational Hours (UTC)
+                    <span className="ml-1 font-normal text-secondary lowercase">offchain gateway</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={timeWindow}
+                    onChange={(e) => setTimeWindow(e.target.value)}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-mono focus:ring-1 focus:ring-accent focus:border-accent shadow-subtle focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-primary block mb-1">Unknown Recipient Action</label>
+                  <CustomSelect
+                    options={recipientActionOptions}
+                    value={unknownRecipientAction}
+                    onChange={setUnknownRecipientAction}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-primary block mb-1">Postcondition Outcome Assertion</label>
+                <input
+                  type="text"
+                  value={outcomeRequirement}
+                  onChange={(e) => setOutcomeRequirement(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-mono focus:ring-1 focus:ring-accent focus:border-accent shadow-subtle focus:outline-none"
+                />
+              </div>
             </div>
 
-            {authStep === "SIGNING" ? (
-              <div className="py-16 text-center space-y-4">
-                <RefreshCw className="h-8 w-8 animate-spin text-accent mx-auto" />
-                <h3 className="text-base font-bold text-primary">Requesting EIP-712 Authorization...</h3>
-                <p className="text-xs text-secondary max-w-md mx-auto">
-                  Owner is signing typed structured data hash with verifying contract address and policy bounds.
-                </p>
-                <div className="inline-block rounded-lg bg-background p-3 font-mono text-xs text-secondary border border-border text-left">
-                  <div>PrimaryType: Policy</div>
-                  <div>maxPerAction: ${maxPerAction} USDC</div>
-                  <div>dailyLimit: ${dailyLimit} USDC</div>
-                  <div>agent: 0x7099...79C8</div>
+            {/* Live Policy Preview Summary */}
+            <div className="rounded-md border border-border bg-background p-4 space-y-2.5">
+              <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase text-primary border-b border-border pb-2">
+                <ShieldCheck className="h-3.5 w-3.5 text-accent" />
+                <span>Live Envelope Preview</span>
+              </div>
+              <div className="space-y-1.5 text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-secondary">Per-Action Cap:</span>
+                  <span className="font-mono font-bold text-primary tabular-nums">${maxPerAction} USDC</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-secondary">Daily Ceiling:</span>
+                  <span className="font-mono font-bold text-primary tabular-nums">${dailyLimit} USDC</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-secondary">Allowed Targets / Recipients:</span>
+                  <span className="font-mono text-primary">{selectedTargets.length} / {selectedRecipients.length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-secondary">Unknown Recipient:</span>
+                  <span className="font-bold text-danger font-mono">{unknownRecipientAction}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-secondary">Operational Hours:</span>
+                  <span className="font-mono text-primary">{timeWindow}</span>
                 </div>
               </div>
-            ) : authStep === "CONFIRMED" ? (
-              <div className="py-16 text-center space-y-4">
-                <CheckCircle2 className="h-10 w-10 text-success mx-auto" />
-                <h3 className="text-lg font-bold text-primary">Policy Authorized Onchain</h3>
-                <p className="text-xs text-secondary">
-                  Cryptographic execution boundary registered in ScopePolicyRegistry.
+            </div>
+
+            {/* Error surface */}
+            {status === "error" && error && (
+              <div className="flex items-start gap-2 rounded-md border border-danger-border bg-danger-surface px-3 py-2.5 text-[11px] text-danger">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{error}</span>
+              </div>
+            )}
+
+            {/* Wallet gating + action buttons */}
+            {!isConnected ? (
+              <div className="rounded-md border border-border bg-background p-4 text-center space-y-3">
+                <Wallet className="h-6 w-6 text-secondary mx-auto" />
+                <p className="text-xs text-secondary max-w-xs mx-auto leading-relaxed">
+                  Connect the owner wallet to authorize this policy onchain. The owner signs and pays gas on{" "}
+                  {scopeChain.name}.
                 </p>
+                <div className="flex justify-center">
+                  <ConnectWallet />
+                </div>
+              </div>
+            ) : wrongNetwork ? (
+              <div className="rounded-md border border-danger-border bg-danger-surface p-4 text-center space-y-3">
+                <p className="text-xs text-danger">Your wallet is on the wrong network. Switch to {scopeChain.name} to authorize.</p>
+                <div className="flex justify-center">
+                  <ConnectWallet />
+                </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Form Controls */}
-                <div className="space-y-4 text-xs">
-                  <div>
-                    <label className="font-semibold text-primary block mb-1">Policy Name</label>
-                    <input
-                      type="text"
-                      value={policyName}
-                      onChange={(e) => setPolicyName(e.target.value)}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-medium focus:border-accent focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="font-semibold text-primary block mb-1">Maximum Per Action</label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-2 text-secondary font-mono">$</span>
-                        <input
-                          type="number"
-                          value={maxPerAction}
-                          onChange={(e) => setMaxPerAction(e.target.value)}
-                          className="w-full rounded-md border border-border bg-background pl-6 pr-3 py-2 text-primary font-mono tabular-nums focus:border-accent focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="font-semibold text-primary block mb-1">Daily Limit (24h)</label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-2 text-secondary font-mono">$</span>
-                        <input
-                          type="number"
-                          value={dailyLimit}
-                          onChange={(e) => setDailyLimit(e.target.value)}
-                          className="w-full rounded-md border border-border bg-background pl-6 pr-3 py-2 text-primary font-mono tabular-nums focus:border-accent focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="font-semibold text-primary block mb-1">Allowed Assets</label>
-                    <input
-                      type="text"
-                      value={allowedAsset}
-                      onChange={(e) => setAllowedAsset(e.target.value)}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-mono focus:border-accent focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="font-semibold text-primary block mb-1">Approved Recipients (Merchants)</label>
-                    <input
-                      type="text"
-                      value={approvedRecipients}
-                      onChange={(e) => setApprovedRecipients(e.target.value)}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-mono focus:border-accent focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="font-semibold text-primary block mb-1">Approved Contracts (Routers)</label>
-                    <input
-                      type="text"
-                      value={approvedContracts}
-                      onChange={(e) => setApprovedContracts(e.target.value)}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-mono focus:border-accent focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="font-semibold text-primary block mb-1">Operational Hours</label>
-                      <input
-                        type="text"
-                        value={timeWindow}
-                        onChange={(e) => setTimeWindow(e.target.value)}
-                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-mono focus:border-accent focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-semibold text-primary block mb-1">Unknown Recipient Action</label>
-                      <select
-                        value={unknownRecipientAction}
-                        onChange={(e) => setUnknownRecipientAction(e.target.value)}
-                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-danger font-semibold focus:border-accent focus:outline-none"
-                      >
-                        <option value="BLOCK">HARD BLOCK (Revert onchain)</option>
-                        <option value="HUMAN_APPROVAL">Require Human Multisig</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="font-semibold text-primary block mb-1">Supported Outcome Requirement</label>
-                    <input
-                      type="text"
-                      value={outcomeRequirement}
-                      onChange={(e) => setOutcomeRequirement(e.target.value)}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-primary font-mono focus:border-accent focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Live Policy Summary Beside Form */}
-                <div className="rounded-xl border border-border bg-background p-5 flex flex-col justify-between space-y-4">
-                  <div>
-                    <div className="flex items-center gap-2 border-b border-border pb-3">
-                      <ShieldCheck className="h-4 w-4 text-accent" />
-                      <span className="text-xs font-mono font-bold uppercase text-primary">Live Policy Summary</span>
-                    </div>
-
-                    <div className="mt-4 space-y-3 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Target Agent:</span>
-                        <span className="font-semibold text-primary">Atlas Procurement Agent</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Per-Action Cap:</span>
-                        <span className="font-mono font-bold text-primary tabular-nums">${maxPerAction}.00 USDC</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Daily Ceiling:</span>
-                        <span className="font-mono font-bold text-primary tabular-nums">${dailyLimit}.00 USDC</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Unknown Recipient:</span>
-                        <span className="font-bold text-danger">{unknownRecipientAction}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Operational Hours:</span>
-                        <span className="font-mono text-primary">{timeWindow}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Postcondition Guard:</span>
-                        <span className="font-mono text-primary text-[11px] truncate max-w-[160px]">{outcomeRequirement}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Authorization Box */}
-                  <div className="space-y-3 pt-4 border-t border-border">
-                    <div className="text-[11px] text-secondary">
-                      Requires EIP-712 structured cryptographic authorization from owner account.
-                    </div>
-                    <button
-                      onClick={handleAuthorize}
-                      disabled={authorizing}
-                      className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-xs font-semibold text-surface shadow hover:bg-accent-hover transition-colors"
-                    >
-                      <Lock className="h-3.5 w-3.5" />
-                      <span>Authorize Policy</span>
-                    </button>
-                  </div>
+              <div className="pt-2 flex items-center justify-between gap-3">
+                <span className="text-[10px] text-secondary font-mono truncate">
+                  Owner: {address?.slice(0, 10)}… · pays gas
+                </span>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={closeDrawer}
+                    className="rounded-md border border-border bg-surface px-3 py-2 text-xs font-semibold text-secondary hover:text-primary transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAuthorize}
+                    disabled={!canAuthorize}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-xs font-semibold text-surface shadow-subtle hover:bg-primary-hover transition-colors disabled:opacity-50"
+                  >
+                    <Lock className="h-3.5 w-3.5" />
+                    <span>Authorize Onchain</span>
+                  </button>
                 </div>
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </Drawer>
     </div>
   );
 }

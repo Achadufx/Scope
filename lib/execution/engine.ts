@@ -1,6 +1,7 @@
 import prisma from "../database/prisma";
 import deployments from "../blockchain/deployments.json";
-import { keccak256, encodePacked, parseUnits, formatUnits } from "viem";
+import { parseUnits } from "viem";
+import { enforceOnchain, ZERO_ADDRESS, type OnchainDecisionCode } from "../blockchain/executor";
 
 export interface ProposeExecutionInput {
   agentId?: string;
@@ -13,6 +14,7 @@ export interface ProposeExecutionInput {
   postconditionType?: number;
   postconditionToken?: string;
   postconditionValue?: number | string;
+  simulatedTime?: string;
   onchain?: boolean;
 }
 
@@ -37,6 +39,36 @@ export interface ExecutionValidationResult {
   gasUsed?: number;
   capitalMoved: number;
   capitalProtected: number;
+}
+
+/** Maps the contract's authoritative decision code to the engine's decision enum. */
+function mapOnchainCodeToDecision(code: OnchainDecisionCode): ExecutionValidationResult["decision"] {
+  switch (code) {
+    case "ALLOW":
+      return "ALLOW";
+    case "RECIPIENT_NOT_ALLOWED":
+      return "RECIPIENT_NOT_ALLOWED";
+    case "CONTRACT_NOT_ALLOWED":
+      return "CONTRACT_NOT_ALLOWED";
+    case "ACTION_LIMIT_EXCEEDED":
+    case "DAILY_LIMIT_EXCEEDED":
+      return "LIMIT_EXCEEDED";
+    case "POLICY_EXPIRED_OR_OUTSIDE_WINDOW":
+    case "DEADLINE_EXPIRED":
+      return "EXPIRED";
+    case "OUTCOME_VIOLATION":
+      return "OUTCOME_VIOLATION";
+    default:
+      // ASSET_NOT_ALLOWED, UNAUTHORIZED_AGENT, INVALID_SIGNATURE, NONCE_USED,
+      // EXECUTION_REVERTED, UNKNOWN_REVERT all collapse to a hard block.
+      return "BLOCK";
+  }
+}
+
+/** USD (float) -> USDC base units (6 decimals), clamped to 6 fractional digits. */
+function toUsdcUnits(usd: number): bigint {
+  if (!isFinite(usd) || usd <= 0) return 0n;
+  return parseUnits(usd.toFixed(6), 6);
 }
 
 export async function evaluateAndExecute(input: ProposeExecutionInput): Promise<ExecutionValidationResult> {
@@ -109,23 +141,49 @@ export async function evaluateAndExecute(input: ProposeExecutionInput): Promise<
     reason = "AGENT_NOT_ACTIVE";
   }
 
-  // Check 2: Policy validity window
-  const now = new Date();
-  const timeValid = now >= policy.validAfter && now <= policy.validUntil;
+  // Check 2: Policy validity window & operational hours
+  const execTime = input.simulatedTime ? new Date(input.simulatedTime) : new Date();
+  const dateValid = execTime >= policy.validAfter && execTime <= policy.validUntil;
+
+  // Check operational hours rule if present (e.g., "08:00-18:00 UTC")
+  const timeWindowRule = policy.rules.find((r) => r.type === "TIME_WINDOW");
+  let hoursValid = true;
+  let hoursSummary = "";
+  if (timeWindowRule && timeWindowRule.value) {
+    const match = timeWindowRule.value.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+    if (match) {
+      const startHour = parseInt(match[1], 10);
+      const startMin = parseInt(match[2], 10);
+      const endHour = parseInt(match[3], 10);
+      const endMin = parseInt(match[4], 10);
+      const currentUtcMinutes = execTime.getUTCHours() * 60 + execTime.getUTCMinutes();
+      const startMinutes = startHour * 60 + startMin;
+      const endMinutes = endHour * 60 + endMin;
+
+      hoursValid = currentUtcMinutes >= startMinutes && currentUtcMinutes <= endMinutes;
+      hoursSummary = `Authorized operational hours: ${timeWindowRule.value}`;
+    }
+  }
+
+  const timeValid = dateValid && hoursValid;
   checks.push({
     step: "TIME_WINDOW",
     passed: timeValid,
     details: timeValid
-      ? `Within policy operational window (expires ${policy.validUntil.toLocaleDateString()})`
-      : `Policy expired at ${policy.validUntil.toISOString()}`,
+      ? `Within policy operational window (${hoursSummary || `expires ${policy.validUntil.toLocaleDateString()}`})`
+      : !dateValid
+      ? `Policy expired at ${policy.validUntil.toISOString()}`
+      : `Operational hours violation: Triggered at ${execTime.toISOString().slice(11, 16)} UTC (Authorized: ${timeWindowRule?.value})`,
   });
   if (!timeValid && decision === "ALLOW") {
     decision = "EXPIRED";
-    reason = "POLICY_EXPIRED";
+    reason = !dateValid ? "POLICY_EXPIRED" : "TIME_WINDOW_VIOLATION";
     violation = {
       type: "TIME_WINDOW_VIOLATION",
-      expected: `Active before ${policy.validUntil.toISOString()}`,
-      actual: `Execution triggered at ${now.toISOString()}`,
+      expected: timeWindowRule?.value || `Active before ${policy.validUntil.toISOString()}`,
+      actual: !dateValid
+        ? `Execution triggered at ${execTime.toISOString()}`
+        : `Execution attempted at ${execTime.toISOString().slice(11, 16)} UTC (Rogue off-hours execution)`,
       severity: "HIGH",
     };
   }
@@ -278,15 +336,109 @@ export async function evaluateAndExecute(input: ProposeExecutionInput): Promise<
     }
   }
 
-  // Generate realistic hash and transaction record
-  const isAllowed = decision === "ALLOW";
-  const capitalMoved = isAllowed ? numericAmount : 0.0;
-  const capitalProtected = isAllowed ? 0.0 : numericAmount;
-  const txHash = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-  const blockNumber = 120500 + Math.floor(Math.random() * 100);
-  const gasUsed = isAllowed ? 68500 + Math.floor(Math.random() * 1500) : 41200 + Math.floor(Math.random() * 900);
+  // === Authoritative onchain enforcement (replaces the former Math.random fakes) ===
+  // Everything above is a human-readable *preview*. The real decision — and the real
+  // txHash/blockNumber/gasUsed — come from the ScopeExecutor contract: we build the
+  // 11-field request, the agent signs it (EIP-712, gasless), the relayer simulates it
+  // (a revert IS the block, decoded from the contract's custom errors), and when the
+  // policy allows it the relayer submits the real transaction and pays the gas.
+  const pcValue =
+    input.postconditionValue != null
+      ? typeof input.postconditionValue === "string"
+        ? parseFloat(input.postconditionValue)
+        : input.postconditionValue
+      : 0;
 
-  // Save to DB
+  // Declare the onchain outcome up-front; some blocks are decided before submission.
+  let txHash: string | null = null;
+  let blockNumber: number | null = null;
+  let gasUsed: number | null = null;
+  let status: string;
+
+  // SCOPE is a two-layer firewall. The ScopeExecutor contract enforces the absolute
+  // validity window, the recipient/target/asset allowlists, per-action & daily limits,
+  // deadlines, nonces, signatures and postconditions. Time-of-day ("operational hours")
+  // is NOT expressible onchain, so it is enforced by the offchain policy gateway BEFORE
+  // submission. When the gateway blocks on such a rule we must not submit — the chain
+  // would allow it — so the offchain decision stands and no transaction is sent.
+  const offchainOnlyBlock = decision !== "ALLOW" && reason === "TIME_WINDOW_VIOLATION";
+
+  if (offchainOnlyBlock) {
+    checks.push({
+      step: "ONCHAIN_ENFORCEMENT",
+      passed: false,
+      details:
+        "Blocked by SCOPE's offchain policy gateway (operational-hours rule) before submission — the request never reached the chain. $0.00 exposed.",
+    });
+    status = "REVERTED";
+  } else {
+    // Ask the chain. A revert IS the block decision, decoded from the contract's custom
+    // errors; an allowed request is executed for real by the funded relayer.
+    const onchain = await enforceOnchain({
+      target: input.target as `0x${string}`,
+      asset: input.asset as `0x${string}`,
+      recipient: input.recipient as `0x${string}`,
+      amountUnits: toUsdcUnits(numericAmount),
+      postconditionType: input.postconditionType ?? 0,
+      postconditionToken: (input.postconditionToken || ZERO_ADDRESS) as `0x${string}`,
+      postconditionValue: toUsdcUnits(pcValue),
+      execute: input.onchain !== false,
+    });
+
+    if (onchain.available) {
+      // The chain is the source of truth. A revert decodes to a decision code.
+      const chainDecision = mapOnchainCodeToDecision(onchain.code);
+
+      checks.push({
+        step: "ONCHAIN_ENFORCEMENT",
+        passed: onchain.code === "ALLOW",
+        details:
+          onchain.code === "ALLOW"
+            ? `ScopeExecutor executed onchain in block ${onchain.blockNumber} (gas ${onchain.gasUsed}) — tx ${onchain.txHash}`
+            : `ScopeExecutor reverted with ${onchain.errorName ?? onchain.code}: boundary enforced by the contract. ${onchain.detail}`,
+      });
+
+      // Trust the chain over the offchain preview whenever they disagree.
+      if (chainDecision !== decision) {
+        decision = chainDecision;
+        if (chainDecision !== "ALLOW" && !violation) {
+          violation = {
+            type: onchain.code,
+            expected: "Policy-compliant execution",
+            actual: onchain.detail,
+            severity: "CRITICAL",
+          };
+        }
+      }
+      if (decision !== "ALLOW") {
+        reason = onchain.code;
+      }
+
+      if (onchain.executed) {
+        txHash = onchain.txHash ?? null;
+        blockNumber = onchain.blockNumber ?? null;
+        gasUsed = onchain.gasUsed ?? null;
+        status = "SUCCESS";
+      } else {
+        status = "REVERTED";
+      }
+    } else {
+      // Chain unreachable / contracts not yet deployed. Keep the offchain preview decision
+      // but NEVER fabricate a transaction hash — mark it honestly as unverified.
+      checks.push({
+        step: "ONCHAIN_ENFORCEMENT",
+        passed: false,
+        details: `Onchain enforcement unavailable — decision from offchain policy preview only, not yet verified onchain. (${onchain.detail})`,
+      });
+      status = decision === "ALLOW" ? "SIMULATED" : "REVERTED";
+    }
+  }
+
+  const isAllowed = decision === "ALLOW";
+  const capitalMoved = status === "SUCCESS" ? numericAmount : 0.0;
+  const capitalProtected = isAllowed ? 0.0 : numericAmount;
+
+  // Persist the execution with the REAL onchain outcome.
   const execution = await prisma.execution.create({
     data: {
       agentId: agent.id,
@@ -295,7 +447,7 @@ export async function evaluateAndExecute(input: ProposeExecutionInput): Promise<
       asset: input.asset,
       amount: numericAmount,
       recipient: input.recipient,
-      status: isAllowed ? "SUCCESS" : "REVERTED",
+      status,
       decision,
       txHash,
       blockNumber,
@@ -343,7 +495,10 @@ export async function evaluateAndExecute(input: ProposeExecutionInput): Promise<
         workspaceId: agent.workspaceId,
         type: "EXECUTION_APPROVED",
         title: `Action Authorized: $${numericAmount.toFixed(2)} USDC`,
-        description: `Execution to ${input.recipient.slice(0, 10)}... satisfied all policy boundaries and completed onchain.`,
+        description:
+          status === "SUCCESS"
+            ? `Execution to ${input.recipient.slice(0, 10)}... satisfied all policy boundaries and completed onchain.`
+            : `Execution to ${input.recipient.slice(0, 10)}... satisfied all policy boundaries (pending onchain confirmation).`,
       },
     });
   }
@@ -355,9 +510,9 @@ export async function evaluateAndExecute(input: ProposeExecutionInput): Promise<
     checks,
     violation,
     executionId: execution.id,
-    txHash,
-    blockNumber,
-    gasUsed,
+    txHash: txHash ?? undefined,
+    blockNumber: blockNumber ?? undefined,
+    gasUsed: gasUsed ?? undefined,
     capitalMoved,
     capitalProtected,
   };

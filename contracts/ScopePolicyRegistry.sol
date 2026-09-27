@@ -188,7 +188,7 @@ contract ScopePolicyRegistry {
     function isRecipientAllowed(bytes32 policyHash, address recipient) external view returns (bool) {
         Policy storage p = _policies[policyHash];
         if (!p.active) return false;
-        if (p.allowedRecipients.length == 0) return true; // empty allows targets
+        // Deny-by-default: an empty recipient allowlist permits no direct recipient.
         for (uint256 i = 0; i < p.allowedRecipients.length; i++) {
             if (p.allowedRecipients[i] == recipient) return true;
         }

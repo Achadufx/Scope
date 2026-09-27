@@ -86,7 +86,7 @@ export default function AgentsPage() {
                     </div>
                   </div>
 
-                  <span className="rounded-full bg-success-surface border border-success-border px-2 py-0.2 text-[10px] font-semibold text-success uppercase">
+                  <span className="rounded-full bg-success-surface border border-success-border px-2 py-0.5 text-[10px] font-semibold text-success uppercase">
                     {agent.status}
                   </span>
                 </div>

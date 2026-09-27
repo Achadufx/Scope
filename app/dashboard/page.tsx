@@ -8,15 +8,11 @@ import {
   Sliders,
   Bot,
   ArrowUpRight,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Layers,
   Zap,
-  ExternalLink,
-  Lock,
   RefreshCw,
 } from "lucide-react";
+import AddressPill from "@/components/ui/AddressPill";
+import StatusBadge from "@/components/ui/StatusBadge";
 
 interface StatsData {
   metrics: {
@@ -90,8 +86,8 @@ export default function DashboardPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
         <div className="flex flex-col items-center justify-center gap-3 text-secondary py-20">
-          <RefreshCw className="h-6 w-6 animate-spin text-accent" />
-          <span className="text-xs font-mono">Syncing policy firewall state...</span>
+          <RefreshCw className="h-5 w-5 animate-spin text-accent" />
+          <span className="text-xs font-mono tracking-tight">Synchronizing execution firewall telemetry...</span>
         </div>
       </div>
     );
@@ -103,32 +99,32 @@ export default function DashboardPage() {
   );
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-primary">Command Center</h1>
-            <span className="rounded-md bg-accent-light px-2 py-0.5 text-xs font-semibold text-accent font-mono">
-              Workspace: Acme Autonomous Systems
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-primary font-sans">Command Center</h1>
+            <span className="rounded bg-accent-light px-2 py-0.5 text-[10px] font-semibold text-accent font-mono uppercase tracking-wider border border-accent/20">
+              Acme Autonomous Systems
             </span>
           </div>
-          <p className="text-xs text-secondary mt-1">
+          <p className="text-xs text-secondary mt-1 tracking-tight">
             Real-time onchain economic boundary monitoring & execution firewall telemetry.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <Link
             href="/simulator"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-primary hover:bg-background transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-primary hover:bg-background transition-colors shadow-subtle"
           >
             <Zap className="h-3.5 w-3.5 text-accent" />
-            <span>Simulate Request</span>
+            <span>Simulate Action</span>
           </Link>
           <Link
             href="/attack-lab"
-            className="inline-flex items-center gap-1.5 rounded-md bg-danger px-3 py-1.5 text-xs font-semibold text-surface shadow hover:bg-danger/90 transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md bg-danger px-3 py-1.5 text-xs font-semibold text-surface shadow-subtle hover:bg-danger/90 transition-colors"
           >
             <ShieldAlert className="h-3.5 w-3.5" />
             <span>Attack Lab</span>
@@ -139,82 +135,83 @@ export default function DashboardPage() {
       {/* Metrics Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {/* Metric 1 */}
-        <div className="rounded-xl border border-border bg-surface p-5 shadow-sm">
+        <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-mono font-medium text-secondary uppercase">Active Agents</span>
-            <Bot className="h-4 w-4 text-secondary" />
+            <span className="text-[10px] font-mono font-medium text-secondary uppercase tracking-wider">Active Agents</span>
+            <Bot className="h-3.5 w-3.5 text-secondary" />
           </div>
-          <div className="mt-2 text-2xl font-bold text-primary font-mono tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-primary font-mono tabular-nums tracking-tight">
             {data.metrics.activeAgents}
           </div>
-          <div className="mt-1 text-[11px] text-success flex items-center gap-1">
+          <div className="mt-1 text-[11px] text-success flex items-center gap-1.5 font-medium">
             <span className="h-1.5 w-1.5 rounded-full bg-success inline-block" />
             <span>100% Policy Bound</span>
           </div>
         </div>
 
         {/* Metric 2 */}
-        <div className="rounded-xl border border-border bg-surface p-5 shadow-sm">
+        <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-mono font-medium text-secondary uppercase">Active Policies</span>
-            <Sliders className="h-4 w-4 text-secondary" />
+            <span className="text-[10px] font-mono font-medium text-secondary uppercase tracking-wider">Active Policies</span>
+            <Sliders className="h-3.5 w-3.5 text-secondary" />
           </div>
-          <div className="mt-2 text-2xl font-bold text-primary font-mono tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-primary font-mono tabular-nums tracking-tight">
             {data.metrics.policies}
           </div>
-          <div className="mt-1 text-[11px] text-secondary">EIP-712 Authorized</div>
+          <div className="mt-1 text-[11px] text-secondary font-mono">EIP-712 Authorized</div>
         </div>
 
         {/* Metric 3 */}
-        <div className="rounded-xl border border-border bg-surface p-5 shadow-sm">
+        <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-mono font-medium text-secondary uppercase">Actions Today</span>
-            <Activity className="h-4 w-4 text-secondary" />
+            <span className="text-[10px] font-mono font-medium text-secondary uppercase tracking-wider">Actions Today</span>
+            <Activity className="h-3.5 w-3.5 text-secondary" />
           </div>
-          <div className="mt-2 text-2xl font-bold text-primary font-mono tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-primary font-mono tabular-nums tracking-tight">
             {data.metrics.actionsToday}
           </div>
-          <div className="mt-1 text-[11px] text-secondary">Atomic Onchain Execution</div>
+          <div className="mt-1 text-[11px] text-secondary font-mono">Atomic Onchain Execution</div>
         </div>
 
         {/* Metric 4 */}
-        <div className="rounded-xl border border-border bg-surface p-5 shadow-sm">
+        <div className="rounded-lg border border-border bg-surface p-4 shadow-card">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-mono font-medium text-secondary uppercase">Attacks Blocked</span>
-            <ShieldAlert className="h-4 w-4 text-danger" />
+            <span className="text-[10px] font-mono font-medium text-secondary uppercase tracking-wider">Attacks Blocked</span>
+            <ShieldAlert className="h-3.5 w-3.5 text-danger" />
           </div>
-          <div className="mt-2 text-2xl font-bold text-danger font-mono tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-danger font-mono tabular-nums tracking-tight">
             {data.metrics.blocked}
           </div>
-          <div className="mt-1 text-[11px] text-danger font-mono font-medium">
+          <div className="mt-1 text-[11px] text-danger font-mono font-semibold tabular-nums">
             ${data.metrics.capitalProtected.toLocaleString("en-US", { minimumFractionDigits: 2 })} Saved
           </div>
         </div>
       </div>
 
       {/* Main Agent Card: Atlas Procurement Agent */}
-      <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-5">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-light text-accent border border-accent/20">
-              <Bot className="h-6 w-6" />
+      <div className="rounded-lg border border-border bg-surface p-5 shadow-card">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-4">
+          <div className="flex items-start gap-3.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-accent-light text-accent border border-accent/20">
+              <Bot className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-primary">{data.atlas.name}</h2>
-                <span className="rounded-full bg-success-surface border border-success-border px-2 py-0.5 text-[10px] font-semibold text-success uppercase">
-                  {data.atlas.status}
-                </span>
-                <span className="rounded-full bg-accent-light px-2 py-0.5 text-[10px] font-semibold text-accent uppercase font-mono">
-                  Authority: {data.atlas.authority}
+                <h2 className="text-base font-bold text-primary font-sans">{data.atlas.name}</h2>
+                <StatusBadge status={data.atlas.status} size="sm" />
+                <span className="rounded bg-background border border-border px-1.5 py-0.5 text-[10px] font-medium text-secondary font-mono">
+                  {data.atlas.authority}
                 </span>
               </div>
-              <div className="mt-1 flex items-center gap-3 text-xs text-secondary font-mono">
-                <span>Address: {data.atlas.walletAddress ? `${data.atlas.walletAddress.slice(0, 8)}...${data.atlas.walletAddress.slice(-6)}` : "0x7099...79C8"}</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-secondary">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-secondary/70">Wallet:</span>
+                  <AddressPill address={data.atlas.walletAddress || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"} />
+                </span>
                 <span>•</span>
-                <span>Policy: {data.atlas.policyName}</span>
+                <span className="text-[11px]">Policy: <strong className="text-primary font-medium">{data.atlas.policyName}</strong></span>
                 <span>•</span>
-                <span>Last action: 8 seconds ago</span>
+                <span className="text-[11px] font-mono text-secondary">Live telemetry active</span>
               </div>
             </div>
           </div>
@@ -222,28 +219,28 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2">
             <Link
               href={`/agents/${data.atlas.id || "atlas"}`}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline"
+              className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-primary hover:bg-background transition-colors shadow-subtle"
             >
-              <span>View Agent Specs</span>
-              <ArrowUpRight className="h-3.5 w-3.5" />
+              <span>Agent Spec</span>
+              <ArrowUpRight className="h-3 w-3" />
             </Link>
           </div>
         </div>
 
         {/* Exposure bar and boundaries */}
-        <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
           {/* Exposure bar */}
           <div className="lg:col-span-2 space-y-2">
             <div className="flex justify-between items-center text-xs">
-              <span className="font-semibold text-primary">Today's Exposure</span>
-              <span className="font-mono text-secondary tabular-nums">
+              <span className="font-semibold text-primary">Daily Rolling Exposure</span>
+              <span className="font-mono text-secondary tabular-nums text-xs">
                 <strong className="text-primary font-bold">
                   ${data.atlas.todayExposure.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                 </strong>{" "}
-                / ${data.atlas.dailyLimit.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                / ${data.atlas.dailyLimit.toLocaleString("en-US", { minimumFractionDigits: 2 })} USDC
               </span>
             </div>
-            <div className="h-2.5 w-full rounded-full bg-background border border-border overflow-hidden">
+            <div className="h-2 w-full rounded-full bg-background border border-border overflow-hidden">
               <div
                 className={`h-full transition-all duration-500 rounded-full ${
                   exposurePercent > 80 ? "bg-warning" : "bg-accent"
@@ -251,7 +248,7 @@ export default function DashboardPage() {
                 style={{ width: `${exposurePercent}%` }}
               />
             </div>
-            <div className="flex justify-between text-[11px] text-secondary">
+            <div className="flex justify-between text-[11px] text-secondary font-mono">
               <span>{exposurePercent}% of 24h allocation utilized</span>
               <span>Per-action cap: ${data.atlas.maxPerAction.toFixed(2)} USDC</span>
             </div>
@@ -259,34 +256,34 @@ export default function DashboardPage() {
 
           {/* Quick Enforced Bounds Pill Box */}
           <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="p-2.5 rounded-lg bg-background border border-border">
-              <div className="text-[10px] uppercase font-mono text-secondary">Target Router</div>
-              <div className="font-semibold text-primary mt-0.5 truncate">ProcurementRouter</div>
+            <div className="p-2.5 rounded-md bg-background border border-border">
+              <div className="text-[10px] uppercase font-mono text-secondary tracking-wider">Target Contract</div>
+              <div className="font-semibold text-primary mt-0.5 truncate text-[11px]">ProcurementRouter</div>
             </div>
-            <div className="p-2.5 rounded-lg bg-background border border-border">
-              <div className="text-[10px] uppercase font-mono text-secondary">Approved Recipient</div>
-              <div className="font-semibold text-primary mt-0.5 truncate">Acme Components</div>
+            <div className="p-2.5 rounded-md bg-background border border-border">
+              <div className="text-[10px] uppercase font-mono text-secondary tracking-wider">Approved Merchant</div>
+              <div className="font-semibold text-primary mt-0.5 truncate text-[11px]">Acme Components</div>
             </div>
-            <div className="p-2.5 rounded-lg bg-background border border-border">
-              <div className="text-[10px] uppercase font-mono text-secondary">Asset Boundary</div>
-              <div className="font-semibold text-primary mt-0.5">Demo USDC (6 dec)</div>
+            <div className="p-2.5 rounded-md bg-background border border-border">
+              <div className="text-[10px] uppercase font-mono text-secondary tracking-wider">Settlement Asset</div>
+              <div className="font-semibold text-primary mt-0.5 text-[11px]">MockUSDC (6 dec)</div>
             </div>
-            <div className="p-2.5 rounded-lg bg-background border border-border">
-              <div className="text-[10px] uppercase font-mono text-secondary">Unknown Recipient</div>
-              <div className="font-semibold text-danger mt-0.5">HARD BLOCK</div>
+            <div className="p-2.5 rounded-md bg-background border border-border">
+              <div className="text-[10px] uppercase font-mono text-secondary tracking-wider">Unknown Recipient</div>
+              <div className="font-semibold text-danger mt-0.5 text-[11px]">HARD REVERT</div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Two Column Layout: Recent Executions & Live Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Recent Executions (2/3 width) */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-primary">Recent Execution Telemetry</h3>
-              <span className="text-xs text-secondary font-mono">({data.recentExecutions.length} recorded)</span>
+              <h3 className="text-sm font-bold text-primary">Recent Execution Telemetry</h3>
+              <span className="text-[11px] text-secondary font-mono">({data.recentExecutions.length} recorded)</span>
             </div>
             <Link
               href="/executions"
@@ -297,56 +294,46 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+          <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-card">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-border text-left text-xs">
-                <thead className="bg-background font-mono text-[11px] uppercase tracking-wider text-secondary">
+                <thead className="bg-background font-mono text-[10px] uppercase tracking-wider text-secondary">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">Decision</th>
-                    <th className="px-4 py-3 font-semibold">Amount</th>
-                    <th className="px-4 py-3 font-semibold">Destination</th>
-                    <th className="px-4 py-3 font-semibold">Capital Moved</th>
-                    <th className="px-4 py-3 font-semibold">Transaction</th>
-                    <th className="px-4 py-3 font-semibold text-right">Evidence</th>
+                    <th className="px-3 py-2.5 font-semibold">Decision</th>
+                    <th className="px-3 py-2.5 font-semibold">Amount</th>
+                    <th className="px-3 py-2.5 font-semibold">Destination</th>
+                    <th className="px-3 py-2.5 font-semibold">Capital Moved</th>
+                    <th className="px-3 py-2.5 font-semibold">Transaction</th>
+                    <th className="px-3 py-2.5 font-semibold text-right">Evidence</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border font-sans">
                   {data.recentExecutions.map((item) => {
                     const isSuccess = item.decision === "ALLOW";
                     return (
-                      <tr key={item.id} className="hover:bg-background/50 transition-colors">
+                      <tr key={item.id} className="hover:bg-background/60 transition-colors group">
                         {/* Decision */}
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          {isSuccess ? (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-success-surface border border-success-border px-2 py-0.5 text-[11px] font-semibold text-success font-mono">
-                              <CheckCircle2 className="h-3 w-3" />
-                              <span>ALLOW</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-danger-surface border border-danger-border px-2 py-0.5 text-[11px] font-semibold text-danger font-mono">
-                              <XCircle className="h-3 w-3" />
-                              <span>{item.decision}</span>
-                            </span>
-                          )}
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <StatusBadge status={item.decision} size="sm" />
                         </td>
 
                         {/* Amount */}
-                        <td className="px-4 py-3 whitespace-nowrap font-mono font-semibold tabular-nums text-primary">
+                        <td className="px-3 py-2.5 whitespace-nowrap font-mono font-semibold tabular-nums text-primary text-[11px]">
                           ${item.amount.toFixed(2)} USDC
                         </td>
 
                         {/* Destination */}
-                        <td className="px-4 py-3 whitespace-nowrap text-secondary font-mono text-[11px]">
-                          {item.recipient ? `${item.recipient.slice(0, 6)}...${item.recipient.slice(-4)}` : "—"}
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <AddressPill address={item.recipient} truncate={true} prefixChars={6} suffixChars={4} />
                           {!isSuccess && item.violations && item.violations[0] && (
-                            <div className="text-[10px] text-danger font-sans">
+                            <div className="text-[10px] text-danger font-mono mt-0.5">
                               {item.violations[0].type}
                             </div>
                           )}
                         </td>
 
                         {/* Capital Moved */}
-                        <td className="px-4 py-3 whitespace-nowrap font-mono tabular-nums">
+                        <td className="px-3 py-2.5 whitespace-nowrap font-mono tabular-nums text-[11px]">
                           {isSuccess ? (
                             <span className="text-primary font-medium">${item.capitalMoved.toFixed(2)}</span>
                           ) : (
@@ -355,15 +342,15 @@ export default function DashboardPage() {
                         </td>
 
                         {/* Tx Hash */}
-                        <td className="px-4 py-3 whitespace-nowrap font-mono text-[11px] text-secondary">
-                          {item.txHash ? `${item.txHash.slice(0, 8)}...` : "—"}
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <AddressPill address={item.txHash} truncate={true} prefixChars={6} suffixChars={4} />
                         </td>
 
                         {/* Evidence Link */}
-                        <td className="px-4 py-3 whitespace-nowrap text-right">
+                        <td className="px-3 py-2.5 whitespace-nowrap text-right">
                           <Link
                             href={`/executions/${item.id}`}
-                            className="text-xs font-semibold text-accent hover:underline inline-flex items-center gap-1"
+                            className="text-xs font-semibold text-accent hover:underline inline-flex items-center gap-0.5"
                           >
                             <span>Inspect</span>
                             <ArrowUpRight className="h-3 w-3" />
@@ -379,18 +366,18 @@ export default function DashboardPage() {
         </div>
 
         {/* Right Column: Live Audit Activity Events */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-primary">Activity Stream</h3>
-            <span className="text-xs text-secondary font-mono">Audit Log</span>
+            <h3 className="text-sm font-bold text-primary">Live Activity Stream</h3>
+            <span className="text-[10px] text-secondary font-mono uppercase tracking-wider">Audit Log</span>
           </div>
 
-          <div className="rounded-xl border border-border bg-surface p-4 shadow-sm divide-y divide-border">
+          <div className="rounded-lg border border-border bg-surface p-4 shadow-card divide-y divide-border">
             {data.recentEvents.map((ev) => (
-              <div key={ev.id} className="py-3 first:pt-0 last:pb-0">
+              <div key={ev.id} className="py-2.5 first:pt-0 last:pb-0">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`h-2 w-2 rounded-full ${
+                    className={`h-1.5 w-1.5 rounded-full ${
                       ev.type === "ATTACK_REPELLED"
                         ? "bg-danger"
                         : ev.type === "EXECUTION_APPROVED"
@@ -400,8 +387,8 @@ export default function DashboardPage() {
                   />
                   <span className="text-xs font-bold text-primary">{ev.title}</span>
                 </div>
-                <p className="mt-1 text-xs text-secondary leading-relaxed pl-4">{ev.description}</p>
-                <div className="mt-1 text-[10px] font-mono text-secondary pl-4">
+                <p className="mt-1 text-[11px] text-secondary leading-relaxed pl-3.5">{ev.description}</p>
+                <div className="mt-1 text-[10px] font-mono text-secondary/70 pl-3.5">
                   {new Date(ev.createdAt).toLocaleTimeString()}
                 </div>
               </div>
@@ -409,20 +396,20 @@ export default function DashboardPage() {
           </div>
 
           {/* Quick Sandbox Banner */}
-          <div className="rounded-xl border border-accent/20 bg-accent-light p-4">
+          <div className="rounded-lg border border-accent/20 bg-accent-light p-3.5">
             <div className="flex items-start gap-3">
-              <Zap className="h-5 w-5 text-accent shrink-0 mt-0.5" />
+              <Zap className="h-4 w-4 text-accent shrink-0 mt-0.5" />
               <div>
                 <div className="text-xs font-bold text-primary">Interactive Attack Sandbox</div>
-                <p className="text-xs text-secondary mt-1">
-                  Test compromised agent inputs against live onchain contracts.
+                <p className="text-[11px] text-secondary mt-0.5 leading-relaxed">
+                  Demonstrate split-screen defense against rogue prompts and supplier poisoning.
                 </p>
                 <Link
                   href="/attack-lab"
-                  className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline"
+                  className="mt-2.5 inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline"
                 >
                   <span>Launch Attack Scenarios</span>
-                  <ArrowUpRight className="h-3.5 w-3.5" />
+                  <ArrowUpRight className="h-3 w-3" />
                 </Link>
               </div>
             </div>

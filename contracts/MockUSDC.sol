@@ -76,4 +76,20 @@ contract MockUSDC {
         emit Transfer(address(0), to, amount);
         emit FaucetMinted(to, amount);
     }
+
+    /**
+     * @notice DEMO-ONLY provisioning helper. Mints `amount` to `holder` and grants `spender`
+     * a standing max allowance in a single call, so a gasless demo agent never needs ETH to
+     * approve. Acceptable only because this is a throwaway demo token.
+     */
+    function demoProvision(address holder, address spender, uint256 amount) external {
+        require(holder != address(0), "DEMO: holder is zero address");
+        require(spender != address(0), "DEMO: spender is zero address");
+        totalSupply += amount;
+        balanceOf[holder] += amount;
+        allowance[holder][spender] = type(uint256).max;
+        emit Transfer(address(0), holder, amount);
+        emit FaucetMinted(holder, amount);
+        emit Approval(holder, spender, type(uint256).max);
+    }
 }
