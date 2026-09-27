@@ -131,7 +131,7 @@ export default function ConnectWallet() {
             </div>
             {balance && (
               <div className="mt-1 text-[11px] text-secondary tabular-nums">
-                {parseFloat(balance.formatted).toFixed(4)} {balance.symbol}
+                {Number(balance.value) / 10 ** balance.decimals} {balance.symbol}
               </div>
             )}
           </div>
