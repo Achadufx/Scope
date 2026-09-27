@@ -1,118 +1,121 @@
-# SCOPE — The Execution Firewall for Autonomous Agents
+# SCOPE
 
-> **"Give agents autonomy. Keep control over what they can do."**  
-> *SCOPE turns economic policies into onchain execution boundaries for autonomous agents.*
+### The Execution Firewall for Autonomous Agents
 
----
+> **Give agents autonomy. Keep control over what they can do.**
 
-## 1. Product North Star & Problem Statement
+SCOPE is an **onchain execution-policy layer for autonomous agents**.
 
-As autonomous AI agents acquire wallet keys to purchase compute, manage inventory, execute DeFi strategies, and settle supplier invoices, giving an agent a raw private key grants unrestricted signing capability. **Intelligence is not authorization.** A prompt injection, hallucination, or compromised tool can redirect capital immediately.
+It solves a fundamental authorization problem created when AI agents are given the ability to transact on blockchains:
 
-**SCOPE** introduces the **Execution Policy** abstraction—an onchain economic firewall that wraps autonomous execution inside machine-enforced boundaries:
-- **WHO** — Authorized agent wallet address
-- **WHAT** — Allowed assets (e.g. USDC)
-- **WHERE** — Approved contracts (e.g. ProcurementRouter) and approved merchants (e.g. Acme Components)
-- **HOW MUCH** — Per-action maximums ($500) and daily rolling limits ($2,000)
-- **WHEN** — Time-bounded operational windows (08:00–18:00 UTC)
-- **UNDER WHAT OUTCOME** — Atomic machine-verifiable postconditions (e.g. minimum received output)
+> **Cryptographic signing proves who authorized a transaction. It does not, by itself, express what that signer is allowed to do.**
 
-When an agent attempts an action that escapes this economic envelope, **the blockchain reverts the transaction atomically ($0.00 capital moved)**.
+SCOPE turns economic authority into programmable policies and enforces those policies directly in the blockchain execution path.
 
 ---
 
-## 2. The "Judge Oh" Moment
+## The Blockchain Problem
 
-> *"The AI made the decision. The blockchain enforced the boundary."*
+Blockchains are designed around cryptographic authorization.
 
-```
-AGENT REQUEST ($480 USDC)
-          ↓
-    SCOPE POLICY
-  Allowed: Acme Components
-  Actual:  Attacker Wallet (0x3C44...93BC)
-          ↓
-   POLICY VIOLATION
-   (RecipientNotAllowed)
-          ↓
-  BLOCKCHAIN REVERT
-          ↓
-    CAPITAL MOVED
-        $0.00
-```
+If a valid private key signs a valid transaction, the network can verify the signature and execute the transaction.
 
----
+That model works well when a human directly controls every transaction.
 
-## 3. Product Surfaces
+Autonomous agents create a more granular problem.
 
-1. **Landing Page (`/`)**: Institutional presentation of the execution firewall, visual kill shot flow, and architectural principles.
-2. **Command Center (`/dashboard`)**: Real-time metrics (Active Agents, Policies, Actions Today, Attacks Blocked), Atlas fleet card ($1,284 / $2,000 today's exposure), and live audit stream.
-3. **Attack Lab (`/attack-lab`)**: Live split-screen adversarial testing ("Without SCOPE" vs "With SCOPE") testing:
-   - Compromised Supplier (Rogue Recipient Injection)
-   - Budget Bleed ($700 against $500 max cap)
-   - Off-Hours Rogue Execution (Operational window escape)
-   - Outcome Postcondition Failure (Slippage / drain exploit)
-4. **Policy Builder (`/policies`)**: Visual policy constructor with live summary and **EIP-712 typed cryptographic signature authorization**.
-5. **Action Simulator (`/simulator`)**: Pre-flight validation sandbox testing candidate transactions with stepped checks.
-6. **Evidence Vault (`/executions` and `/executions/[id]`)**: Deep forensic audit pipeline (`POLICY → REQUEST → VALIDATION → VIOLATION → REVERT`) with decoded revert reasons and explorer links.
-7. **Smart Contracts (`/contracts`)**: Bytecode verification, ABIs, and deployed addresses.
-8. **Developer API (`/developer`)**: `POST /api/v1/executions/propose` gateway, masked API keys, and SDK snippets in TypeScript, Python, and cURL.
-9. **Settings (`/settings`)**: EVM RPC endpoint, chain settings, and demo state reset.
+An agent may be authorized to act on behalf of a user or organization without being authorized to perform **every transaction that its wallet can sign**.
+
+For example, an AI procurement agent might legitimately be authorized to:
+
+- Spend USDC
+- Pay an approved supplier
+- Spend no more than $500 per transaction
+- Stay below a daily budget
+- Operate during defined hours
+
+The agent's wallet, however, may technically be capable of signing transactions that violate all of those constraints.
+
+A compromised tool, manipulated execution request, incorrect model decision, or malicious destination could therefore turn a legitimate agent authorization into an unintended blockchain transaction.
+
+The blockchain can answer:
+
+> **Who signed this?**
+
+The missing question is:
+
+> **Was this particular economic action within the authority granted to the agent?**
+
+SCOPE addresses that gap.
 
 ---
 
-## 4. Smart Contract Architecture
+# The Solution
 
-```
-ScopePolicyRegistry
-       │
-       │ (Policy definitions, whitelists, limits)
-       ▼
-  ScopeExecutor (Firewall)
-       ├── EIP-712 Signature Verification
-       ├── Nonce & Deadline Replay Guard
-       ├── Target & Asset Whitelists
-       ├── maxPerAction & Daily Spending Limit
-       ├── Atomic Dispatch to Target
-       └── Atomic Postcondition Assertion
-             ├── SafeMerchant (Acme Components)
-             └── MaliciousMerchant (Phishing Clone / Slippage Skimmer)
-```
+SCOPE introduces an **Execution Policy** between an autonomous agent and blockchain state changes.
 
-### Deployed Contracts
-- **`ScopePolicyRegistry.sol`**: Manages policy lifecycle (`createPolicy`, `activatePolicy`, `revokePolicy`, `getPolicy`).
-- **`ScopeExecutor.sol`**: Authoritative execution firewall enforcing EIP-712 signatures, preconditions, atomic calls, and postconditions (`MIN_TOKEN_RECEIVED`).
-- **`MockUSDC.sol`**: 6-decimal test token labeled "DEMO USDC".
-- **`SafeMerchant.sol`**: Legitimate procurement destination (Acme Components).
-- **`MaliciousMerchant.sol`**: Adversarial contract for live attack demonstration.
+Policies convert high-level economic authority into machine-enforced execution constraints.
 
----
+A SCOPE policy can define:
 
-## 5. Architectural Differentiation
+| Dimension | What it controls |
+|---|---|
+| **WHO** | Which agent is authorized |
+| **WHAT** | Which assets or actions are permitted |
+| **WHERE** | Which contracts and recipients are permitted |
+| **HOW MUCH** | Per-action and daily spending limits |
+| **WHEN** | Valid execution windows and deadlines |
+| **OUTCOME** | Machine-verifiable execution conditions |
 
-| Dimension | Normal Wallet | Session Keys | ERC-7579 | **SCOPE** |
-| :--- | :--- | :--- | :--- | :--- |
-| **Identity vs Authority** | Blurs signing identity with unlimited spend | Delegates signing authority | Modular account framework | Separates agent identity from execution envelope |
-| **Counterparty Bounds** | None | Limited | Modular validation | Strict target & recipient whitelists |
-| **Postcondition Enforcement** | None | None | Hook-based | Atomic outcome assertion (`MIN_TOKEN_RECEIVED`) |
-| **Revert Guarantees** | Offchain heuristic | Offchain check | Contract execution | Authoritative onchain hard revert ($0 moved) |
+Instead of relying on an agent to voluntarily follow its instructions, SCOPE places the policy **inside the execution path**.
+
+If an execution request violates the policy, the SCOPE executor rejects the transaction before the underlying state change can complete.
+
+### The core principle
+
+> **The AI made the decision. The blockchain enforced the boundary.**
 
 ---
 
-## 6. Quickstart & Verification
+# How It Works
 
-```bash
-# 1. Install dependencies
-npm install
-
-# 2. Run smart contract test suite (6 passing on Paris EVM)
-npm run contracts:test
-
-# 3. Deploy contracts & seed database
-npm run contracts:deploy
-npm run db:seed
-
-# 4. Start local development server
-npm run dev
-# Open http://localhost:3000
-```
+```text
+                    AUTONOMOUS AGENT
+                           │
+                           │
+                           │ Execution Request
+                           ▼
+                  ┌──────────────────┐
+                  │  SCOPE EXECUTOR  │
+                  │                  │
+                  │ Execution        │
+                  │ Firewall         │
+                  └────────┬─────────┘
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │  POLICY VALIDATION │
+                 └─────────┬─────────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+          ▼                ▼                ▼
+       Identity         Recipient        Limits
+          │                │                │
+          └────────────────┼────────────────┘
+                           │
+                           ▼
+                    Preconditions
+                           │
+                           ▼
+                  Atomic Execution
+                           │
+                           ▼
+                 Postcondition Check
+                           │
+                 ┌─────────┴─────────┐
+                 │                   │
+                PASS                FAIL
+                 │                   │
+                 ▼                   ▼
+              EXECUTE              REVERT
