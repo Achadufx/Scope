@@ -89,69 +89,32 @@ export default function ConnectWallet() {
     address.toLowerCase() ===
       deployments.demoAccounts.owner.toLowerCase();
 
-  /*
-   * DISCONNECTED
-   *
-   * We intentionally expose both connectors:
-   *
-   * 1. Browser Wallet
-   *    Uses an injected provider such as MetaMask's browser extension.
-   *
-   * 2. Connect Wallet
-   *    Uses WalletConnect and works with mobile wallets.
-   */
   if (!isConnected) {
-    const injectedConnector = connectors.find(
-      (connector) => connector.id === "injected"
-    );
-
     const walletConnectConnector = connectors.find(
       (connector) => connector.id === "walletConnect"
     );
 
     return (
       <div className="relative">
-        <div className="flex items-center gap-1.5">
-          {injectedConnector && (
-            <button
-              onClick={() =>
-                connect({
-                  connector: injectedConnector,
-                })
-              }
-              disabled={isConnecting}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-primary shadow-sm hover:bg-background transition-colors disabled:opacity-60"
-            >
-              <Wallet className="h-3.5 w-3.5" />
+        <button
+          onClick={() => {
+            if (walletConnectConnector) {
+              connect({
+                connector: walletConnectConnector,
+              });
+            }
+          }}
+          disabled={isConnecting || !walletConnectConnector}
+          className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-primary shadow-sm hover:bg-background transition-colors disabled:opacity-60"
+        >
+          <Wallet className="h-3.5 w-3.5" />
 
-              <span>
-                {isConnecting
-                  ? "Connecting…"
-                  : "Browser Wallet"}
-              </span>
-            </button>
-          )}
-
-          {walletConnectConnector && (
-            <button
-              onClick={() =>
-                connect({
-                  connector: walletConnectConnector,
-                })
-              }
-              disabled={isConnecting}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-primary shadow-sm hover:bg-background transition-colors disabled:opacity-60"
-            >
-              <Wallet className="h-3.5 w-3.5" />
-
-              <span>
-                {isConnecting
-                  ? "Connecting…"
-                  : "Connect Wallet"}
-              </span>
-            </button>
-          )}
-        </div>
+          <span>
+            {isConnecting
+              ? "Connecting…"
+              : "Connect Wallet"}
+          </span>
+        </button>
 
         {connectError && (
           <div className="absolute right-0 mt-1 w-72 rounded-md border border-danger-border bg-danger-surface px-3 py-2 text-[11px] text-danger shadow-lg z-50">
@@ -159,19 +122,15 @@ export default function ConnectWallet() {
           </div>
         )}
 
-        {!injectedConnector &&
-          !walletConnectConnector && (
-            <div className="absolute right-0 mt-1 w-64 rounded-md border border-danger-border bg-danger-surface px-3 py-2 text-[11px] text-danger shadow-lg z-50">
-              No wallet connectors are available.
-            </div>
-          )}
+        {!walletConnectConnector && (
+          <div className="absolute right-0 mt-1 w-72 rounded-md border border-danger-border bg-danger-surface px-3 py-2 text-[11px] text-danger shadow-lg z-50">
+            WalletConnect is not available.
+          </div>
+        )}
       </div>
     );
   }
 
-  /*
-   * WRONG NETWORK
-   */
   if (chainId !== scopeChain.id) {
     return (
       <button
@@ -194,9 +153,6 @@ export default function ConnectWallet() {
     );
   }
 
-  /*
-   * CONNECTED
-   */
   const addrUrl = explorerAddressUrl(address);
 
   return (
@@ -206,7 +162,7 @@ export default function ConnectWallet() {
     >
       <button
         onClick={() =>
-          setMenuOpen((open) => !open)
+          setMenuOpen((o) => !o)
         }
         className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-primary shadow-sm hover:bg-background transition-colors"
       >
@@ -248,10 +204,7 @@ export default function ConnectWallet() {
               <button
                 onClick={() => {
                   if (address) {
-                    navigator.clipboard?.writeText(
-                      address
-                    );
-
+                    navigator.clipboard?.writeText(address);
                     setCopied(true);
 
                     setTimeout(
@@ -288,10 +241,7 @@ export default function ConnectWallet() {
               className="flex items-center gap-2 rounded-md px-3 py-2 text-xs text-primary hover:bg-background transition-colors"
             >
               <ExternalLink className="h-3.5 w-3.5 text-secondary" />
-
-              <span>
-                View on BaseScan
-              </span>
+              <span>View on BaseScan</span>
             </a>
           )}
 
@@ -303,10 +253,7 @@ export default function ConnectWallet() {
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-danger hover:bg-danger-surface transition-colors"
           >
             <LogOut className="h-3.5 w-3.5" />
-
-            <span>
-              Disconnect
-            </span>
+            <span>Disconnect</span>
           </button>
         </div>
       )}
